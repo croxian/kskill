@@ -56,8 +56,14 @@ export interface LotteFlow {
   toPayment: string;
   /** 결제수단 화면에 도달했음을 알리는 요소. 여기 닿으면 멈춘다. */
   paymentMarker: string;
-  /** 로그인 안 됐을 때만 보이는 요소. */
-  loggedOut: string;
+  /** 로그인 안 됐을 때만 보이는 링크. 세션 판별의 기준이다. */
+  loginLink: string;
+  /** 로그인 폼. codegen 이 잡은 placeholder 그대로. */
+  idInput: string;
+  pwInput: string;
+  loginSubmit: string;
+  /** 로그인 완료를 기다리는 상한(ms). */
+  loginTimeoutMs: number;
   /** 남은 시간 카운트다운. 롯데는 없다 — 실측으로 확인했다. */
   countdown?: string;
   /** 캡차·대기열. 보이면 즉시 중단한다. 우회하지 않는다. */
@@ -82,8 +88,12 @@ export const LOTTE_FLOW: LotteFlow = {
   measured: true,
   toPayment: '결제하기',
   paymentMarker: 'text=최종 결제수단',
-  loggedOut: 'text=로그인',
-  interstitial: 'text=/캡차|보안문자|대기열/',
+  loginLink: '로그인',
+  idInput: '아이디 또는 이메일을 입력해 주세요',
+  pwInput: '비밀번호를 입력해 주세요',
+  loginSubmit: '로그인',
+  loginTimeoutMs: 20_000,
+  interstitial: 'text=/캡차|보안문자|대기열|인증번호/',
 };
 
 export function seatSelector(

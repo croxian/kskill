@@ -6,6 +6,7 @@ import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
 import { LotteSeatHolder } from './hold/lotte.js';
 import { LOTTE_FLOW, selectorsAreStubs } from './hold/selectors.js';
+import { credentialsFromEnv } from './hold/login.js';
 import { HoldManager } from './hold/session.js';
 import { createTelegramNotifier } from './notify/index.js';
 import type { Alert } from './watch/loop.js';
@@ -19,7 +20,10 @@ import { Watcher } from './watch/loop.js';
  * 환경변수 (.env.example 참고):
  *   TG_TOKEN          텔레그램 봇 토큰
  *   TG_CHAT_ID        받을 채팅 ID
- *   LOTTE_DEEPLINK    회차 딥링크 템플릿 (선택)
+ *   LOTTE_ID          롯데시네마 아이디 (선택 — 세션 만료 시 자동 재로그인)
+ *   LOTTE_PW          롯데시네마 비밀번호 (선택)
+ *   SESSION_CHECK_MIN 세션 점검 주기(분). 기본 30
+ *   HOLD_SECONDS      스스로 정한 홀드 상한(초). 기본 300
  */
 async function main() {
   const specPath = process.argv[2] ?? 'watch.json';
@@ -55,12 +59,21 @@ async function main() {
   // 동시 홀드는 1건뿐이므로 진행 중인 알림 하나만 들고 있으면 된다.
   let held: Alert | null = null;
 
+  const creds = credentialsFromEnv();
+  const holder = new LotteSeatHolder({
+    ...(creds ? { credentials: creds } : {}),
+    onLogin: (outcome) => {
+      // 로그인이 실제로 일어난 것은 조용히 넘길 사건이 아니다.
+      if (outcome === 'recovered') log('세션이 만료되어 자동으로 다시 로그인했습니다');
+    },
+  });
+
   const holdManager =
     spec.action === 'hold'
       ? new HoldManager(
           {
             // 롯데에는 회차 딥링크가 없어 예매 첫 화면부터 UI 를 밟는다.
-            holder: new LotteSeatHolder(),
+            holder,
             now: () => Date.now(),
             sleep,
             onCountdown: async (_r, left) => {
@@ -80,8 +93,38 @@ async function main() {
   log(`감시 시작 · 지점 ${spec.theaters.length} · 날짜 ${spec.dates.join(', ')}`);
   log(`조건 ${spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`} · 동작 ${spec.action}`);
   log(`만료 ${spec.expiresAt}`);
+  if (holdManager) log(creds ? '자동 로그인 사용 가능' : '자동 로그인 없음 — 세션이 풀리면 알립니다');
+
+  /**
+   * 세션 점검.
+   *
+   * 알림이 뜬 순간에 세션이 죽어 있으면 로그인하는 몇 초 사이에 자리가 날아간다.
+   * 그래서 미리, 주기적으로 본다. 자격증명이 없으면 알리기만 한다 —
+   * 잠든 사이 세션이 풀려 그날 감시가 통째로 무용지물이 되는 걸 막는다.
+   */
+  const sessionEveryMs = Number(process.env.SESSION_CHECK_MIN ?? 30) * 60_000;
+  let sessionCheckedAt = 0;
+
+  async function ensureSession(): Promise<void> {
+    if (!holdManager) return;
+    if (Date.now() - sessionCheckedAt < sessionEveryMs) return;
+    sessionCheckedAt = Date.now();
+    try {
+      if ((await holder.checkSession()) === 'needs-human') {
+        log('⚠ 로그인이 풀렸습니다. 좌석 확보를 할 수 없습니다.');
+        await tg.warn(
+          '⚠️ <b>로그인이 풀렸습니다</b>\n\n좌석 확보를 할 수 없습니다.\n' +
+            'PC 에서 <code>npm run login</code> 으로 다시 로그인하거나,\n' +
+            '.env 에 <code>LOTTE_ID</code> / <code>LOTTE_PW</code> 를 넣어 두세요.',
+        );
+      }
+    } catch (err) {
+      log(`세션 점검 실패: ${msg(err)}`);
+    }
+  }
 
   for (;;) {
+    await ensureSession();
     const res = await watcher.runOnce();
 
     if (res.offline) {

@@ -9,6 +9,7 @@ import {
   showtimeNamePattern,
   type LotteFlow,
 } from './selectors.js';
+import { ensureLoggedIn, type Credentials, type LoginOutcome } from './login.js';
 import type { HeldSession, HoldRequest, SeatHolder } from './session.js';
 
 /**
@@ -18,9 +19,12 @@ import type { HeldSession, HoldRequest, SeatHolder } from './session.js';
  * 전부 한 페이지 안의 클릭이라 예매 → 지점 → 영화 → 날짜 → 회차 →
  * 인원 → 좌석 순서를 그대로 밟아야 한다.
  *
- * 로그인 자동화는 하지 않는다. 사람이 한 번 로그인해 둔 프로필을 쓴다.
+ * 평소에는 사람이 한 번 로그인해 둔 프로필(.profile)의 세션을 쓴다.
  *
  *   npm run login   ← 한 번만
+ *
+ * 세션이 죽었을 때만 자격증명으로 되살린다. 자동 로그인이 매번 일어나면
+ * 그게 계정 잠금으로 가는 길이라, 이 구조를 유지하는 게 핵심이다.
  *
  * 이 클래스에는 **결제 버튼을 누르는 경로가 없다.** 결제수단 화면에
  * 도달하면 거기서 멈추고 사람에게 넘긴다.
@@ -28,7 +32,10 @@ import type { HeldSession, HoldRequest, SeatHolder } from './session.js';
 
 export class LoginRequiredError extends Error {
   constructor() {
-    super('브라우저에 로그인되어 있지 않습니다. npm run login 을 먼저 실행하세요.');
+    super(
+      '브라우저에 로그인되어 있지 않습니다. ' +
+        'npm run login 으로 직접 로그인하거나, .env 에 LOTTE_ID / LOTTE_PW 를 넣어 두세요.',
+    );
     this.name = 'LoginRequiredError';
   }
 }
@@ -59,6 +66,13 @@ export interface LotteHolderOpts {
   flow?: LotteFlow;
   /** 단계별 대기 상한(ms). */
   stepTimeoutMs?: number;
+  /**
+   * 세션이 죽었을 때만 쓰는 자격증명. 없으면 사람을 부른다.
+   * 평소에는 .profile 세션이 유지되므로 며칠에 한 번 쓸까 말까다.
+   */
+  credentials?: Credentials;
+  /** 로그인이 일어났을 때 알린다. 조용히 넘어가면 안 되는 사건이다. */
+  onLogin?(outcome: LoginOutcome): void;
   /** 테스트에서 브라우저를 갈아끼우기 위한 구멍. */
   launch?(profileDir: string): Promise<BrowserContext>;
 }
@@ -72,6 +86,27 @@ export class LotteSeatHolder implements SeatHolder {
     this.profileDir = opts.profileDir ?? '.profile';
     this.flow = opts.flow ?? LOTTE_FLOW;
     this.stepTimeout = opts.stepTimeoutMs ?? 15_000;
+  }
+
+  /**
+   * 세션이 살아 있는지 확인하고, 죽었으면 되살린다.
+   *
+   * 홀드가 필요한 순간에 세션이 죽어 있으면 로그인하는 몇 초 사이에
+   * 자리가 날아간다. 그래서 미리, 주기적으로 본다.
+   */
+  async checkSession(): Promise<LoginOutcome> {
+    const ctx = await this.launch();
+    try {
+      const page = ctx.pages()[0] ?? (await ctx.newPage());
+      page.setDefaultTimeout(this.stepTimeout);
+      await page.goto(this.flow.baseUrl, { waitUntil: 'domcontentloaded' });
+
+      const outcome = await ensureLoggedIn(page, this.flow, this.opts.credentials);
+      this.opts.onLogin?.(outcome);
+      return outcome;
+    } finally {
+      await ctx.close().catch(() => {});
+    }
   }
 
   async hold(req: HoldRequest): Promise<HeldSession> {
@@ -92,6 +127,12 @@ export class LotteSeatHolder implements SeatHolder {
 
       await page.goto(this.flow.baseUrl, { waitUntil: 'domcontentloaded' });
       await this.assertUsable(page);
+
+      // 세션이 죽었으면 여기서 한 번 되살린다. 자격증명이 없으면 중단한다 —
+      // 로그인 없이 진행하면 좌석 클릭이 조용히 무시된다.
+      const login = await ensureLoggedIn(page, this.flow, this.opts.credentials);
+      this.opts.onLogin?.(login);
+      if (login === 'needs-human') throw new LoginRequiredError();
 
       await this.navigateToSeats(page, req.showtime);
       await this.setAudience(page, req.seats.length);
@@ -190,11 +231,6 @@ export class LotteSeatHolder implements SeatHolder {
         .catch(() => false);
       if (blocked) throw new InterstitialError();
     }
-    const loggedOut = await page
-      .locator(this.flow.loggedOut)
-      .isVisible()
-      .catch(() => false);
-    if (loggedOut) throw new LoginRequiredError();
   }
 
   /**

@@ -66,7 +66,12 @@ export function createTelegramNotifier(cfg: NotifierConfig) {
     return id === undefined ? client.sendMessage(text) : client.editMessage(id, text);
   }
 
-  return { notify, updateHold, holdExpired, client };
+  /** 알림이 아닌 운영 경고. 로그인 만료처럼 사람이 손대야 하는 것들. */
+  async function warn(text: string): Promise<SendResult> {
+    return client.sendMessage(text);
+  }
+
+  return { notify, updateHold, holdExpired, warn, client };
 }
 
 function toBody(alert: Alert): AlertBody {

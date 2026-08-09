@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { LotteSeatHolder, SeatTakenError } from '../src/hold/lotte.js';
+import { LoginRequiredError, LotteSeatHolder, SeatTakenError } from '../src/hold/lotte.js';
+import { credentialsFromEnv } from '../src/hold/login.js';
 import {
   HoldBusyError,
   HoldManager,
@@ -238,10 +239,20 @@ describe('HoldManager — 실패', () => {
  * 예매 화면을 흉내 내는 최소한의 가짜.
  * 홀더가 실제로 쓰는 표면만 구현한다.
  */
-function fakeBrowser(opts: { seatStatus?: Record<string, string>; paymentVisible?: boolean } = {}) {
+function fakeBrowser(
+  opts: {
+    seatStatus?: Record<string, string>;
+    paymentVisible?: boolean;
+    /** true 면 로그인 링크가 보인다 = 로그아웃 상태 */
+    loggedOut?: boolean;
+  } = {},
+) {
   const clicks: string[] = [];
+  const fills: Array<[string, string]> = [];
   const closed = { count: 0 };
   const seatStatus = opts.seatStatus ?? {};
+  // 로그인 버튼을 누르면 로그인된 것으로 친다
+  let loggedOut = opts.loggedOut ?? false;
 
   const locator = (sel: string) => ({
     isVisible: async () => false,
@@ -269,16 +280,31 @@ function fakeBrowser(opts: { seatStatus?: Record<string, string>; paymentVisible
     setDefaultTimeout: () => {},
     goto: async () => {},
     locator,
-    getByRole: (role: string, o: { name: unknown }) => ({
-      click: async () => {
-        clicks.push(`${role}:${String(o.name)}`);
+    getByPlaceholder: (ph: string) => ({
+      fill: async (v: string) => {
+        fills.push([ph, v]);
       },
-      getByRole: (r2: string, o2: { name: unknown }) => ({
-        click: async () => {
-          clicks.push(`${role}>${r2}:${String(o2.name)}`);
-        },
-      }),
     }),
+    getByRole: (role: string, o: { name: unknown }) => {
+      const label = String(o.name);
+      const isLoginLink = role === 'link' && label === '로그인';
+      const isLoginSubmit = role === 'button' && label === '로그인';
+      return {
+        isVisible: async () => (isLoginLink ? loggedOut : false),
+        waitFor: async () => {
+          if (isLoginLink && loggedOut) throw new Error('still visible');
+        },
+        click: async () => {
+          clicks.push(`${role}:${label}`);
+          if (isLoginSubmit) loggedOut = false;
+        },
+        getByRole: (r2: string, o2: { name: unknown }) => ({
+          click: async () => {
+            clicks.push(`${role}>${r2}:${String(o2.name)}`);
+          },
+        }),
+      };
+    },
   };
 
   const ctx = {
@@ -289,8 +315,88 @@ function fakeBrowser(opts: { seatStatus?: Record<string, string>; paymentVisible
     },
   };
 
-  return { clicks, closed, launch: async () => ctx as never };
+  return { clicks, fills, closed, launch: async () => ctx as never };
 }
+
+describe('LotteSeatHolder — 세션', () => {
+  const CREDS = { id: 'someone', password: 'secret' };
+
+  it('로그인되어 있으면 아무것도 하지 않는다', async () => {
+    const b = fakeBrowser();
+    const holder = new LotteSeatHolder({ launch: b.launch, credentials: CREDS });
+
+    expect(await holder.checkSession()).toBe('already');
+    expect(b.fills).toHaveLength(0);
+  });
+
+  /**
+   * 세션이 죽었을 때만 자동 로그인한다. 매번 로그인하면 그게 계정 잠금으로
+   * 가는 길이라, 이 구조를 유지하는 게 핵심이다.
+   */
+  it('세션이 죽었고 자격증명이 있으면 되살린다', async () => {
+    const b = fakeBrowser({ loggedOut: true });
+    const holder = new LotteSeatHolder({ launch: b.launch, credentials: CREDS });
+
+    expect(await holder.checkSession()).toBe('recovered');
+    expect(b.fills.map(([, v]) => v)).toEqual(['someone', 'secret']);
+  });
+
+  it('자격증명이 없으면 사람을 부른다', async () => {
+    const b = fakeBrowser({ loggedOut: true });
+    const holder = new LotteSeatHolder({ launch: b.launch });
+
+    expect(await holder.checkSession()).toBe('needs-human');
+    expect(b.fills).toHaveLength(0);
+  });
+
+  it('세션 점검은 브라우저를 남기지 않는다', async () => {
+    const b = fakeBrowser();
+    await new LotteSeatHolder({ launch: b.launch }).checkSession();
+
+    expect(b.closed.count).toBe(1);
+  });
+
+  /** 로그인 없이 진행하면 좌석 클릭이 조용히 무시된다. 시작 전에 막는다. */
+  it('로그아웃 상태에서 자격증명 없이 홀드하면 거부한다', async () => {
+    const b = fakeBrowser({ loggedOut: true });
+    const holder = new LotteSeatHolder({ launch: b.launch });
+
+    await expect(holder.hold(req())).rejects.toThrow(LoginRequiredError);
+    expect(b.clicks.filter((c) => c.startsWith('[seat-code'))).toHaveLength(0);
+    expect(b.closed.count).toBe(1);
+  });
+
+  it('홀드 도중 세션이 죽어 있으면 되살리고 계속한다', async () => {
+    const b = fakeBrowser({ loggedOut: true });
+    const seen: string[] = [];
+    const holder = new LotteSeatHolder({
+      launch: b.launch,
+      credentials: CREDS,
+      onLogin: (o) => seen.push(o),
+    });
+
+    const session = await holder.hold(req());
+
+    expect(seen).toEqual(['recovered']);
+    expect(session.atPayment).toBe(true);
+  });
+});
+
+describe('credentialsFromEnv', () => {
+  it('둘 다 있어야 쓴다. 자동 로그인은 옵트인이다', () => {
+    expect(credentialsFromEnv({ LOTTE_ID: 'a', LOTTE_PW: 'b' })).toEqual({
+      id: 'a',
+      password: 'b',
+    });
+    expect(credentialsFromEnv({ LOTTE_ID: 'a' })).toBeUndefined();
+    expect(credentialsFromEnv({ LOTTE_PW: 'b' })).toBeUndefined();
+    expect(credentialsFromEnv({})).toBeUndefined();
+  });
+
+  it('아이디의 앞뒤 공백을 떨어낸다', () => {
+    expect(credentialsFromEnv({ LOTTE_ID: '  a  ', LOTTE_PW: 'b' })?.id).toBe('a');
+  });
+});
 
 describe('LotteSeatHolder — 화면 진행', () => {
   const request = req();
