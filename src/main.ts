@@ -29,7 +29,10 @@ import { Watcher } from './watch/loop.js';
  */
 async function main() {
   const specPath = process.argv[2] ?? 'watch.json';
-  const spec = normalizeSpec(JSON.parse(readFileSync(specPath, 'utf8')) as WatchSpec);
+  // 메모장이 UTF-8 로 저장하면 맨 앞에 BOM 이 붙고 JSON.parse 가 첫 글자에서
+  // 실패한다. 에러 메시지가 "Unexpected token" 이라 원인을 찾기 어렵다.
+  const raw = readFileSync(specPath, 'utf8').replace(/^\uFEFF/, '');
+  const spec = normalizeSpec(JSON.parse(raw) as WatchSpec);
 
   const token = need('TG_TOKEN');
   const chatId = need('TG_CHAT_ID');
