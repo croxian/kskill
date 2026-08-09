@@ -43,6 +43,8 @@ export interface RunResult {
   /** 잔여석이 늘어 2단으로 넘어간 회차 수 */
   targets: number;
   alerts: Alert[];
+  /** 상한에 걸려 이번에 보내지 않은 후보 수. 다음 폴링에서 다시 후보가 된다. */
+  suppressed: number;
   /** 다음 폴링까지 밀리초. STOP 이면 감시 종료. */
   nextWakeMs: number;
   /** 1단 조회가 전부 실패했다. 회차가 없는 것과 구분해야 한다. */
@@ -54,6 +56,13 @@ export class Watcher {
   private snap: Snapshot = new Map();
   private readonly dedupe: Dedupe;
   private cold = true;
+  /**
+   * 상한에 잘려 이번에 보지 못한 회차.
+   *
+   * 이걸 들고 있지 않으면 잔여석이 다시 변할 때까지 영원히 묻힌다.
+   * 다음 폴링에서 잔여석 변화와 무관하게 다시 확인한다.
+   */
+  private pending = new Set<string>();
 
   constructor(
     spec: WatchSpec,
@@ -98,16 +107,35 @@ export class Watcher {
       }) !== STOP);
 
     // 첫 관측이면 현재 상태를 한 번 보여주고, 이후로는 늘어난 것만 본다.
-    const changed = this.cold ? live : risen(this.snap, live);
+    // 지난 폴링에서 상한에 잘린 회차는 변화와 무관하게 다시 끼워 넣는다.
+    const fresh = this.cold ? live : risen(this.snap, live);
+    const carried = live.filter(
+      (s) => this.pending.has(seatMapKey(s)) && !fresh.includes(s),
+    );
+    const changed = [...fresh, ...carried];
+
     this.snap = snapshot(live);
     this.cold = false;
+    this.pending.clear();
 
     // 잔여석 0 인 회차에 좌석맵을 조회할 이유가 없다.
     const targets = changed.filter((s) => s.remainingSeats > 0);
 
     // ── 2단: 좌석맵을 뜯어 실제로 판정한다 ──────────────────
+    const cap = spec.maxAlertsPerRun ?? 5;
     const alerts: Alert[] = [];
-    for (const showtime of targets) {
+    let suppressed = 0;
+
+    for (const [i, showtime] of targets.entries()) {
+      // 상한에 닿으면 좌석맵 조회조차 하지 않고 멈춘다. 남은 회차는
+      // 지문을 남기지 않았으므로 다음 폴링에서 그대로 다시 후보가 된다.
+      if (alerts.length >= cap) {
+        const rest = targets.slice(i);
+        for (const t of rest) this.pending.add(seatMapKey(t));
+        suppressed = rest.length;
+        break;
+      }
+
       let map: SeatMap;
       try {
         map = await this.deps.fetchSeatMap(showtime);
@@ -136,6 +164,7 @@ export class Watcher {
       polled: live.length,
       targets: targets.length,
       alerts,
+      suppressed,
       offline,
       nextWakeMs: this.nextWake(live, now, offline),
     };

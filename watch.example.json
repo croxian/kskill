@@ -14,5 +14,6 @@
   "party": { "mode": "adjacent", "size": 2 },
   "action": "notify",
   "pollFloorSec": 45,
+  "maxAlertsPerRun": 5,
   "expiresAt": "2026-08-14T18:30:00+09:00"
 }

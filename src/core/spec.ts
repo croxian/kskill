@@ -46,6 +46,15 @@ export interface WatchSpec {
   action: 'notify' | 'hold';
   /** 폴링 간격 하한(초). 30 미만은 받지 않는다. */
   pollFloorSec: number;
+  /**
+   * 한 번의 폴링에서 보낼 알림 상한.
+   *
+   * 첫 폴링은 전 회차를 훑으므로, 조건이 넓으면 수십 건이 한꺼번에 나간다.
+   * 텔레그램은 같은 대화방에 초당 한 건 남짓만 받아주고, 무엇보다
+   * 40번 울리는 알림은 아무도 읽지 않는다. 점수 높은 순으로 자르고
+   * 나머지는 다음 폴링에서 다시 후보가 된다.
+   */
+  maxAlertsPerRun?: number;
   /** 무한 감시 금지. 반드시 만료시각을 둔다. ISO 8601. */
   expiresAt: string;
   /** 상영 시각이 이만큼 안쪽이면 감시를 접는다. 현장 발권이 더 빠르다. */
@@ -60,6 +69,7 @@ export function normalizeSpec(spec: WatchSpec): WatchSpec {
     ...spec,
     pollFloorSec: Math.max(POLL_FLOOR_SEC, spec.pollFloorSec || POLL_FLOOR_SEC),
     stopBeforeMin: spec.stopBeforeMin ?? 30,
+    maxAlertsPerRun: Math.max(1, spec.maxAlertsPerRun ?? 5),
     party:
       spec.party.mode === 'single'
         ? { mode: 'single', size: 1 }

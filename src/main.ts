@@ -50,8 +50,9 @@ async function main() {
     if (res.offline) {
       log(`조회가 전부 실패했습니다. ${Math.round(res.nextWakeMs / 1000)}초 뒤 재시도합니다.`);
     } else {
-      const line = `회차 ${res.polled} · 변화 ${res.targets} · 알림 ${res.alerts.length}`;
-      log(res.alerts.length ? `${line}  ← 발송` : line);
+      const parts = [`회차 ${res.polled}`, `변화 ${res.targets}`, `알림 ${res.alerts.length}`];
+      if (res.suppressed) parts.push(`보류 ${res.suppressed}`);
+      log(res.alerts.length ? `${parts.join(' · ')}  ← 발송` : parts.join(' · '));
     }
 
     for (const a of res.alerts) {

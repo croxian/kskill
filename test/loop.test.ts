@@ -286,6 +286,59 @@ describe('Watcher — 실패와 종료', () => {
   });
 });
 
+describe('Watcher — 알림 상한', () => {
+  /**
+   * 첫 폴링은 전 회차를 훑는다. 조건이 넓으면 수십 건이 한꺼번에 나가고,
+   * 40번 울리는 알림은 아무도 읽지 않는다.
+   */
+  const many = () =>
+    harness(
+      Array.from({ length: 12 }, (_, i) =>
+        showtime({ playSequence: String(i + 1), remainingSeats: 6 }),
+      ),
+    );
+
+  it('한 번에 보내는 알림을 상한까지만 보낸다', async () => {
+    const h = many();
+    const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
+
+    const res = await w.runOnce();
+
+    expect(res.alerts).toHaveLength(3);
+    expect(res.suppressed).toBe(9);
+  });
+
+  it('상한을 넘으면 좌석맵 조회조차 하지 않는다', async () => {
+    const h = many();
+    const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
+
+    await w.runOnce();
+
+    expect(h.fetchSeatMap).toHaveBeenCalledTimes(3);
+  });
+
+  it('잘린 회차는 다음 폴링에서 다시 후보가 된다', async () => {
+    const h = many();
+    const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
+
+    const first = await w.runOnce();
+    h.setNow(NOW + 60_000);
+    const second = await w.runOnce();
+
+    // 지문을 남기지 않았으므로 쿨다운에 걸리지 않는다
+    expect(first.alerts).toHaveLength(3);
+    expect(second.alerts).toHaveLength(3);
+    expect(second.alerts[0]!.showtime.playSequence).toBe('4');
+  });
+
+  it('상한을 안 주면 기본값 5', async () => {
+    const h = many();
+    const w = new Watcher(SPEC, h.deps);
+
+    expect((await w.runOnce()).alerts).toHaveLength(5);
+  });
+});
+
 describe('Watcher — 좌석 확보 모드', () => {
   /** 동시 홀드 1건 규칙. 여러 회차가 동시에 열려도 하나만 잡는다. */
   it('hold 모드는 첫 후보에서 멈춘다', async () => {
