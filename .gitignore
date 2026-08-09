@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+
+# 실제 캡처본은 각자 로컬에서. 커밋하려면 test/fixtures/ 아래로.
+/fixtures/
+.env
+.profile/
