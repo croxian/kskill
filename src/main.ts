@@ -6,6 +6,7 @@ import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
 import { LotteSeatHolder } from './hold/lotte.js';
 import { LOTTE_FLOW, selectorsAreStubs } from './hold/selectors.js';
+import { CGV_SESSION_WARNING, CgvSessionKeeper } from './hold/cgv-session.js';
 import { credentialsFromEnv } from './hold/login.js';
 import { HoldManager } from './hold/session.js';
 import { createTelegramNotifier } from './notify/index.js';
@@ -116,10 +117,32 @@ async function main() {
   const sessionEveryMs = Number(process.env.SESSION_CHECK_MIN ?? 30) * 60_000;
   let sessionCheckedAt = 0;
 
+  /**
+   * CGV 는 로그인에 캡차가 있어 자동 재로그인이 불가능하다.
+   * 세션이 죽으면 사람이 직접 들어가야 하므로, 빨리 알리는 게 전부다.
+   * 방문 자체가 세션을 연장하니 확인이 곧 유지이기도 하다.
+   */
+  const cgvKeeper = chains.includes('cgv') ? new CgvSessionKeeper() : null;
+  let cgvWarned = false;
+
   async function ensureSession(): Promise<void> {
-    if (!holdManager) return;
     if (Date.now() - sessionCheckedAt < sessionEveryMs) return;
     sessionCheckedAt = Date.now();
+
+    if (cgvKeeper) {
+      const state = await cgvKeeper.check();
+      if (state === 'logged-out' && !cgvWarned) {
+        cgvWarned = true;
+        log('⚠ CGV 로그인이 풀렸습니다. 캡차 때문에 자동 복구가 안 됩니다.');
+        await tg.warn(CGV_SESSION_WARNING);
+      } else if (state === 'ok') {
+        // 다시 로그인하면 경고를 한 번 더 보낼 수 있게 되돌린다
+        if (cgvWarned) log('CGV 로그인 복구됨');
+        cgvWarned = false;
+      }
+    }
+
+    if (!holdManager) return;
     try {
       if ((await holder.checkSession()) === 'needs-human') {
         log('⚠ 로그인이 풀렸습니다. 좌석 확보를 할 수 없습니다.');

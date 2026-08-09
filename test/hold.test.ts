@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { LoginRequiredError, LotteSeatHolder, SeatTakenError } from '../src/hold/lotte.js';
+import { CgvSessionKeeper } from '../src/hold/cgv-session.js';
 import { credentialsFromEnv } from '../src/hold/login.js';
 import {
   HoldBusyError,
@@ -518,5 +519,65 @@ describe('셀렉터', () => {
   it('실측한 셀렉터로 인식한다', () => {
     expect(selectorsAreStubs(LOTTE_FLOW)).toBe(false);
     expect(selectorsAreStubs({ ...LOTTE_FLOW, measured: false })).toBe(true);
+  });
+});
+
+describe('CgvSessionKeeper', () => {
+  /**
+   * CGV 로그인에는 캡차가 있어 자동 재로그인 경로가 없다.
+   * 세션이 죽으면 사람이 직접 들어가야 하므로, 판정이 정확해야 한다.
+   */
+  function fakeSite(markers: Record<string, boolean>) {
+    const visits: string[] = [];
+    const page = {
+      setDefaultTimeout: () => {},
+      goto: async (u: string) => { visits.push(u); },
+      locator: (sel: string) => ({
+        first: () => ({ isVisible: async () => markers[sel] ?? false }),
+      }),
+    };
+    const closed = { count: 0 };
+    return {
+      visits,
+      closed,
+      launch: async () =>
+        ({
+          pages: () => [page],
+          newPage: async () => page,
+          close: async () => { closed.count++; },
+        }) as never,
+    };
+  }
+
+  it('로그아웃 표시가 보이면 살아 있는 것이다', async () => {
+    const site = fakeSite({ 'text=로그아웃': true });
+    expect(await new CgvSessionKeeper({ launch: site.launch }).check()).toBe('ok');
+  });
+
+  it('로그인 링크가 보이면 풀린 것이다', async () => {
+    const site = fakeSite({ 'text=로그인': true });
+    expect(await new CgvSessionKeeper({ launch: site.launch }).check()).toBe('logged-out');
+  });
+
+  /** 헛알림은 진짜 알림의 신뢰도를 갉아먹는다. 애매하면 아무 말도 하지 않는다. */
+  it('둘 다 못 찾으면 판단을 유보한다', async () => {
+    const site = fakeSite({});
+    expect(await new CgvSessionKeeper({ launch: site.launch }).check()).toBe('unknown');
+  });
+
+  it('네트워크가 흔들린 것을 로그아웃으로 착각하지 않는다', async () => {
+    const keeper = new CgvSessionKeeper({
+      launch: async () => { throw new Error('ECONNRESET'); },
+    });
+    expect(await keeper.check()).toBe('unknown');
+  });
+
+  /** 방문 자체가 세션을 연장한다. 확인이 곧 유지다. */
+  it('확인할 때마다 사이트를 방문하고 브라우저를 남기지 않는다', async () => {
+    const site = fakeSite({ 'text=로그아웃': true });
+    await new CgvSessionKeeper({ launch: site.launch }).check();
+
+    expect(site.visits).toEqual(['https://www.cgv.co.kr']);
+    expect(site.closed.count).toBe(1);
   });
 });
