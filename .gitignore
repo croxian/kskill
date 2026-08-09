@@ -1,0 +1,5 @@
+# credential 은 절대 커밋하지 않습니다
+secrets.env
+.env
+.env.*
+!.env.example
