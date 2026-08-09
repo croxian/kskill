@@ -38,9 +38,19 @@ export const CGV = {
 export interface CgvScnItem {
   siteNo?: string;
   siteNm?: string;
+  /** 상영관 번호. daiso 가 버리는 필드인데 회차를 고유하게 만드는 열쇠다. */
+  scnsNo?: string;
+  /** 상영관 이름. "1관 (Laser)" 처럼 관 종류가 들어 있다. */
+  scnsNm?: string;
+  /** 전시용 상영관 이름. 제휴 브랜드가 붙기도 한다. */
+  expoScnsNm?: string;
   scnYmd?: string;
-  /** 회차 순번. daiso 가 scheduleId 를 만들 때 쓰는 조각인데 고유하지 않다. */
+  /** 회차 순번. 상영관 안에서만 고유하다. scnsNo 와 함께 써야 한다. */
   scnSseq?: string | number;
+  /** 판매 종료 시각 'HHmm'. 언제까지 감시할지를 여기서 정할 수 있다. */
+  salEndTm?: string;
+  /** 1회 최대 예매 가능 매수. */
+  atktPsblQty?: string | number;
   movNo?: string;
   movNm?: string;
   prodNm?: string;
@@ -55,20 +65,20 @@ export interface CgvScnItem {
 }
 
 /**
- * ⚠️ CGV 는 회차 고유 식별자를 주지 않는다.
+ * 회차 고유 키.
  *
- * 실측: 용산아이파크몰 8/14 응답에서 daiso 가 만든 scheduleId
- * `2026081400131` 하나에 06:40 · 06:50 · 07:00 · 07:25 · 07:30 다섯 회차가
- * 붙어 있었다. 좌석 수도 190·134·201·142·624 로 제각각이라 상영관 번호도 아니다.
+ * daiso 는 scheduleId 를 `scnYmd + siteNo + scnSseq` 로 조립하면서
+ * **상영관을 빼먹었다.** 그래서 서로 다른 관의 같은 순번 회차가 한 ID 로
+ * 뭉개졌다 — 실측에서 `2026081400131` 하나에 06:40·07:00·07:30 이 붙어
+ * 있었고 좌석 수도 190·201·624 로 제각각이었다.
  *
- * 그래서 (지점, 날짜, 영화, 시작시각) 으로 회차를 특정한다.
- * 브라우저로 좌석을 잡을 때도 시작 시각으로 회차를 클릭하므로 일관된다.
+ * scnsNo 를 넣으면 해결된다. 직접 호출하면 그 필드가 그대로 온다.
  */
 export function cgvShowtimeKey(
   theaterCode: string,
   playDate: string,
-  movieCode: string,
-  startTime: string,
+  screenNo: string,
+  scnSseq: string,
 ): string {
-  return `${theaterCode}:${playDate}:${movieCode}:${startTime}`;
+  return `${theaterCode}:${playDate}:${screenNo}:${scnSseq}`;
 }

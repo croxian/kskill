@@ -4,63 +4,80 @@ import type { CgvScnItem } from './api.js';
 /**
  * CGV 원본 응답 → 도메인 모델.
  *
- * 롯데와 다른 점이 두 가지 있고, 둘 다 여기서 흡수한다.
+ * daiso 를 거치지 않고 직접 부르면 필드가 훨씬 많이 온다. 실측 비교에서
+ * daiso 는 용산 8/14 의 49개 회차 중 38개만 넘겼고, 상영관 정보도 통째로
+ * 버렸다. 아래 매핑은 원본 필드를 그대로 쓴다.
  */
 
 /**
- * ⚠️ CGV 는 회차 고유 식별자를 주지 않는다.
+ * 회차 고유 키는 (상영관, 회차순번) 이다.
  *
- * 실측(용산 8/14): daiso 가 만든 scheduleId `2026081400131` 하나에
- * 06:40 · 06:50 · 07:00 · 07:25 · 07:30 다섯 회차가 붙어 있었고,
- * 좌석 수도 190·134·201·142·624 로 제각각이라 상영관 번호도 아니었다.
- *
- * 그래서 시작 시각을 회차 키로 쓴다. 한 상영관에서 같은 시각에 두 편을
- * 틀 수는 없으므로 (지점, 날짜, 상영관, 시작시각) 이면 충분히 고유하다.
- * 브라우저로 좌석을 잡을 때도 시작 시각으로 회차를 클릭하므로 일관된다.
+ * daiso 는 scheduleId 를 `scnYmd + siteNo + scnSseq` 로 조립하면서
+ * **상영관을 빼먹었다.** 그래서 서로 다른 관의 같은 순번 회차가 한 ID 로
+ * 뭉개졌다 — 실측에서 `2026081400131` 하나에 06:40·07:00·07:30 이
+ * 붙어 있었고 좌석 수도 190·201·624 로 제각각이었다.
+ * scnsNo 를 넣으면 해결된다.
  */
 export function parseCgvTimetable(items: CgvScnItem[]): Showtime[] {
   return items
     .filter((i) => i.siteNo && i.scnYmd && i.scnsrtTm)
-    .map((i) => {
-      const total = num(i.stcnt);
-      return {
-        chain: 'cgv' as const,
-        theaterId: String(i.siteNo),
-        theaterName: stripPrefix(i.siteNm ?? ''),
-        movieId: String(i.movNo ?? ''),
-        movieName: i.movNm ?? i.prodNm ?? '',
-        screenId: screenFingerprint(total),
-        screenName: `${total}석`,
-        playDate: String(i.scnYmd),
-        // 회차 번호가 없으므로 시작 시각이 그 역할을 한다.
-        playSequence: formatTime(i.scnsrtTm),
-        startTime: formatTime(i.scnsrtTm),
-        divisionCode: '*',
-        totalSeats: total,
-        // frSeatCnt 는 이름 그대로 판매 가능 좌석 수다. 롯데처럼 뒤집혀 있지 않다.
-        // 근거: 금요일 프라임타임 IMAX(18:00)가 0 이었다. "예매된 수 0" 이면
-        // 한 장도 안 팔렸다는 뜻이 되는데 말이 안 된다.
-        remainingSeats: num(i.frSeatCnt ?? i.frtmpSeatCnt),
-      };
-    });
+    .map((i) => ({
+      chain: 'cgv' as const,
+      theaterId: String(i.siteNo),
+      theaterName: stripPrefix(i.siteNm ?? ''),
+      movieId: String(i.movNo ?? ''),
+      movieName: i.movNm ?? i.prodNm ?? '',
+      screenId: String(i.scnsNo ?? ''),
+      screenName: i.scnsNm ?? '',
+      playDate: String(i.scnYmd),
+      playSequence: String(i.scnSseq ?? ''),
+      startTime: formatTime(i.scnsrtTm),
+      divisionCode: '*',
+      totalSeats: num(i.stcnt),
+      // frSeatCnt 는 이름 그대로 판매 가능 좌석 수다. 롯데의 BookingSeatCount 와
+      // 달리 뒤집혀 있지 않다. 금요일 프라임타임 IMAX(18:00)가 0 인 게 근거다 —
+      // "예매된 수 0" 이면 한 장도 안 팔렸다는 뜻이 되는데 말이 안 된다.
+      remainingSeats: num(i.frSeatCnt ?? i.frtmpSeatCnt),
+    }));
 }
 
 /**
- * 상영관 지문.
+ * 판매 종료 시각.
  *
- * CGV 응답에 상영관 이름이 없어서 좌석 수로 구분한다. 한 지점 안에서
- * 상영관마다 좌석 수가 다르므로 충분히 갈린다.
- * 용산아이파크몰 실측: 624(IMAX) · 204 · 201 · 200 · 190 · 142 · 134
- *
- * 원본에 상영관 이름 필드가 있는 것으로 확인되면 그걸로 갈아탄다 —
- * 좌석 수는 좌석 재배치가 있으면 바뀔 수 있는 값이다.
+ * CGV 는 `salEndTm` 으로 언제까지 팔지를 직접 알려준다 (실측: 18:00 회차의
+ * salEndTm 이 18:15 — 상영 시작 15분 뒤까지 판매).
+ * "상영 30분 전에 감시를 접는다" 같은 어림짐작보다 이 값이 정확하다.
  */
-export function screenFingerprint(totalSeats: number): string {
-  return String(totalSeats);
+export function saleEndsAt(item: CgvScnItem): string | undefined {
+  return item.salEndTm ? formatTime(item.salEndTm) : undefined;
 }
 
-/** 감시 스펙에서 IMAX 만 보려면 screens 에 이 값을 넣는다. */
-export const YONGSAN_IMAX = screenFingerprint(624);
+/**
+ * 특별관 판별.
+ *
+ * `scnsNm` 에 관 종류가 들어 있다 — "1관 (Laser)", "IMAX관" 같은 식이다.
+ * 좌석 수로 지문을 삼는 것보다 안전하다. 좌석 수는 좌석 재배치가 있으면 바뀐다.
+ */
+export function isSpecialScreen(screenName: string, kind: RegExp): boolean {
+  return kind.test(screenName);
+}
+
+export const SCREEN_KIND = {
+  IMAX: /IMAX/i,
+  FOURDX: /4DX/i,
+  SCREENX: /SCREENX/i,
+  LASER: /Laser/i,
+  GOLD: /GOLD\s*CLASS|프리미엄/i,
+} as const;
+
+/** 스펙의 screens 에 넣을 상영관 번호를 이름으로 찾는다. */
+export function screensMatching(showtimes: Showtime[], kind: RegExp): string[] {
+  return [
+    ...new Set(
+      showtimes.filter((s) => isSpecialScreen(s.screenName, kind)).map((s) => s.screenId),
+    ),
+  ];
+}
 
 /** '0730' → '07:30'. 24 를 넘는 심야 표기도 그대로 살린다 (CGV 에 25:00 이 있다). */
 function formatTime(raw: unknown): string {

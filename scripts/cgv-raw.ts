@@ -9,7 +9,7 @@
  *
  * 지점 코드: 용산아이파크몰 0013 · 영등포타임스퀘어 0059 · 씨네드쉐프 용산 P013
  */
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 import { CgvBrowserClient } from '../src/adapters/cgv/browser.js';
 import { fetchSiteTimetable } from '../src/adapters/cgv/client.js';
@@ -66,6 +66,11 @@ const special = keys.filter((k) => {
   const values = items.map((i) => i[k]).filter((v) => typeof v === 'string') as string[];
   return values.some((v) => /IMAX|4DX|SCREENX|SPHERE|GOLD|PRIVATE|LASER/i.test(v));
 });
+console.log('\n상영관 이름 목록 (scnsNm):');
+for (const n of [...new Set(items.map((i) => `[${i.scnsNo}] ${i.scnsNm}`))].sort()) {
+  console.log('  ' + n);
+}
+
 console.log('\n특별관 이름이 들어 있는 필드:');
 console.log(special.length ? '  ' + special.join(', ') : '  없음 — 좌석 수로 구분해야 함');
 
@@ -86,10 +91,12 @@ console.log(`\n최대 상영관 ${biggest}석 회차:`);
 for (const i of items.filter((x) => Number(x.stcnt) === biggest)) {
   console.log(
     `  ${fmt(i.scnsrtTm)}  잔여 ${String(i.frSeatCnt ?? '?').padStart(4)} / ${biggest}  ` +
-      `${i.movNm ?? i.prodNm ?? ''}`,
+      `[${i.scnsNo ?? '?'}] ${String(i.scnsNm ?? '?').padEnd(16)} ` +
+      `판매마감 ${fmt(i.salEndTm)}  ${i.movNm ?? i.prodNm ?? ''}`,
   );
 }
 
+mkdirSync('fixtures', { recursive: true });
 const out = `fixtures/cgv-${theaterCode}-${playDate}.json`;
 writeFileSync(out, JSON.stringify(items, null, 2), 'utf8');
 console.log(`\n원본 저장: ${out}`);
