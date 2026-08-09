@@ -108,7 +108,8 @@ export class Watcher {
 
     // 첫 관측이면 현재 상태를 한 번 보여주고, 이후로는 늘어난 것만 본다.
     // 지난 폴링에서 상한에 잘린 회차는 변화와 무관하게 다시 끼워 넣는다.
-    const fresh = this.cold ? live : risen(this.snap, live);
+    const wasCold = this.cold;
+    const fresh = wasCold ? live : risen(this.snap, live);
     const carried = live.filter(
       (s) => this.pending.has(seatMapKey(s)) && !fresh.includes(s),
     );
@@ -131,7 +132,11 @@ export class Watcher {
       // 지문을 남기지 않았으므로 다음 폴링에서 그대로 다시 후보가 된다.
       if (alerts.length >= cap) {
         const rest = targets.slice(i);
-        for (const t of rest) this.pending.add(seatMapKey(t));
+        // 첫 폴링은 "지금 뭐가 있나" 를 한 번 보여주는 목록이지 사건이 아니다.
+        // 여기서 잘린 걸 다음으로 넘기면, 조건이 넓을 때 시작 시점의 재고
+        // 수백 건이 몇십 분에 걸쳐 찔끔찔끔 알림으로 나온다.
+        // 취소표는 사건이므로 그때부터 넘긴다.
+        if (!wasCold) for (const t of rest) this.pending.add(seatMapKey(t));
         suppressed = rest.length;
         break;
       }

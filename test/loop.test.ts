@@ -317,7 +317,37 @@ describe('Watcher — 알림 상한', () => {
     expect(h.fetchSeatMap).toHaveBeenCalledTimes(3);
   });
 
-  it('잘린 회차는 다음 폴링에서 다시 후보가 된다', async () => {
+  /**
+   * 취소표는 사건이므로, 상한에 잘렸다고 버리면 안 된다.
+   * 다음 폴링에서 잔여석 변화와 무관하게 다시 확인한다.
+   */
+  it('취소표가 상한에 잘리면 다음 폴링에서 다시 후보가 된다', async () => {
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      showtime({ playSequence: String(i + 1), remainingSeats: 4 }),
+    );
+    const h = harness(rows);
+    const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps, { coldStart: 'baseline' });
+
+    await w.runOnce(); // 기준만 잡는다
+    h.setRows(rows.map((r) => ({ ...r, remainingSeats: 6 }))); // 전 회차에 취소표
+    const first = await w.runOnce();
+
+    h.setNow(NOW + 60_000);
+    const second = await w.runOnce();
+
+    expect(first.alerts).toHaveLength(3);
+    expect(first.suppressed).toBe(9);
+    // 지문을 남기지 않았으므로 쿨다운에 걸리지 않는다
+    expect(second.alerts).toHaveLength(3);
+    expect(second.alerts[0]!.showtime.playSequence).toBe('4');
+  });
+
+  /**
+   * 첫 폴링은 "지금 뭐가 있나" 를 보여주는 목록이지 사건이 아니다.
+   * 조건이 넓으면 시작 시점의 재고가 수백 건인데, 그걸 다 넘기면
+   * 몇십 분에 걸쳐 찔끔찔끔 알림이 나온다.
+   */
+  it('첫 폴링에서 잘린 것은 넘기지 않는다', async () => {
     const h = many();
     const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
 
@@ -325,10 +355,9 @@ describe('Watcher — 알림 상한', () => {
     h.setNow(NOW + 60_000);
     const second = await w.runOnce();
 
-    // 지문을 남기지 않았으므로 쿨다운에 걸리지 않는다
     expect(first.alerts).toHaveLength(3);
-    expect(second.alerts).toHaveLength(3);
-    expect(second.alerts[0]!.showtime.playSequence).toBe('4');
+    expect(first.suppressed).toBe(9);
+    expect(second.alerts).toHaveLength(0); // 변화가 없으면 조용하다
   });
 
   it('상한을 안 주면 기본값 5', async () => {
