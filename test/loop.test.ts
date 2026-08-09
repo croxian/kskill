@@ -219,6 +219,41 @@ describe('Watcher — 실패와 종료', () => {
     expect(res.polled).toBe(0);
   });
 
+  /**
+   * 조회 실패로 회차 목록이 빈 것과, 감시할 회차가 정말 없는 것은 다르다.
+   * 구분하지 않으면 잠깐의 네트워크 장애로 감시가 조용히 끝난다.
+   */
+  it('조회가 전부 실패하면 종료하지 않고 물러섰다 재시도한다', async () => {
+    const h = harness();
+    h.listShowtimes.mockRejectedValue(new Error('HTTP 403'));
+    const w = new Watcher(SPEC, h.deps);
+
+    const res = await w.runOnce();
+
+    expect(res.offline).toBe(true);
+    expect(res.polled).toBe(0);
+    expect(res.nextWakeMs).toBeGreaterThan(0);
+  });
+
+  it('회차가 정말 없으면 종료한다', async () => {
+    const h = harness([]);
+    const w = new Watcher(SPEC, h.deps);
+
+    const res = await w.runOnce();
+
+    expect(res.offline).toBe(false);
+    expect(res.nextWakeMs).toBe(STOP);
+  });
+
+  it('만료 뒤에는 조회가 실패해도 재시도하지 않는다', async () => {
+    const h = harness();
+    h.listShowtimes.mockRejectedValue(new Error('HTTP 403'));
+    h.setNow(Date.parse('2026-08-11T00:00:00Z'));
+    const w = new Watcher(SPEC, h.deps);
+
+    expect((await w.runOnce()).nextWakeMs).toBe(STOP);
+  });
+
   it('좌석맵 조회가 깨지면 그 회차만 건너뛴다', async () => {
     const h = harness();
     h.fetchSeatMap.mockRejectedValueOnce(new Error('timeout'));

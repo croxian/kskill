@@ -1,0 +1,18 @@
+{
+  "id": "worldtower-odyssey",
+  "theaters": [
+    { "chain": "lotte", "theaterId": "1016", "label": "월드타워" },
+    { "chain": "lotte", "theaterId": "1004", "label": "건대입구" }
+  ],
+  "movies": ["24128"],
+  "dates": ["20260814"],
+  "windows": [
+    { "from": "17:00", "to": "21:00" },
+    { "from": "21:00", "to": "26:00" }
+  ],
+  "block": { "kind": "ratio", "rowPct": [0.4, 0.8], "colPct": [0.3, 0.7] },
+  "party": { "mode": "adjacent", "size": 2 },
+  "action": "notify",
+  "pollFloorSec": 45,
+  "expiresAt": "2026-08-14T18:30:00+09:00"
+}

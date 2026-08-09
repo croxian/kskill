@@ -45,6 +45,8 @@ export interface RunResult {
   alerts: Alert[];
   /** 다음 폴링까지 밀리초. STOP 이면 감시 종료. */
   nextWakeMs: number;
+  /** 1단 조회가 전부 실패했다. 회차가 없는 것과 구분해야 한다. */
+  offline: boolean;
 }
 
 export class Watcher {
@@ -73,15 +75,20 @@ export class Watcher {
 
     // ── 1단: 카운트만 훑는다 ────────────────────────────────
     const all: Showtime[] = [];
+    let attempts = 0;
+    let failures = 0;
     for (let i = 0; i < spec.theaters.length; i++) {
       for (const date of spec.dates) {
+        attempts++;
         try {
           all.push(...(await this.deps.listShowtimes(i, date)));
         } catch (err) {
+          failures++;
           this.deps.onError?.('1단', err, `theater[${i}] ${date}`);
         }
       }
     }
+    const offline = attempts > 0 && failures === attempts;
 
     const live = collapseDivisions(all)
       .filter((s) => matchesSpec(s, spec))
@@ -129,13 +136,24 @@ export class Watcher {
       polled: live.length,
       targets: targets.length,
       alerts,
-      nextWakeMs: this.expired
-        ? STOP
-        : nextWakeMs(
-            live.map((s) => showtimeAt(s.playDate, s.startTime)),
-            now,
-            { floorSec: spec.pollFloorSec, stopBeforeMin: spec.stopBeforeMin },
-          ),
+      offline,
+      nextWakeMs: this.nextWake(live, now, offline),
     };
+  }
+
+  /**
+   * 조회가 전부 실패한 것과 감시할 회차가 없는 것은 다르다.
+   *
+   * 둘 다 회차 목록이 비어 있지만, 전자에서 STOP 을 돌려주면
+   * 잠깐의 네트워크 장애로 감시가 조용히 끝나버린다.
+   */
+  private nextWake(live: Showtime[], now: number, offline: boolean): number {
+    if (this.expired) return STOP;
+    if (offline) return Math.max(this.spec.pollFloorSec, 60) * 1000;
+    return nextWakeMs(
+      live.map((s) => showtimeAt(s.playDate, s.startTime)),
+      now,
+      { floorSec: this.spec.pollFloorSec, stopBeforeMin: this.spec.stopBeforeMin },
+    );
   }
 }

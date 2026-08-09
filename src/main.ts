@@ -1,0 +1,102 @@
+import { readFileSync } from 'node:fs';
+
+import { createLotteAdapter } from './adapters/lotte/adapter.js';
+import { crossCheck } from './adapters/lotte/parse.js';
+import { STOP } from './core/poll.js';
+import { normalizeSpec, type WatchSpec } from './core/spec.js';
+import { createTelegramNotifier } from './notify/index.js';
+import { Watcher } from './watch/loop.js';
+
+/**
+ * 감시기 실행.
+ *
+ *   npm run watch -- watch.json
+ *
+ * 환경변수 (.env.example 참고):
+ *   TG_TOKEN          텔레그램 봇 토큰
+ *   TG_CHAT_ID        받을 채팅 ID
+ *   LOTTE_DEEPLINK    회차 딥링크 템플릿 (선택)
+ */
+async function main() {
+  const specPath = process.argv[2] ?? 'watch.json';
+  const spec = normalizeSpec(JSON.parse(readFileSync(specPath, 'utf8')) as WatchSpec);
+
+  const token = need('TG_TOKEN');
+  const chatId = need('TG_CHAT_ID');
+
+  const lotte = createLotteAdapter(spec.theaters);
+  const tg = createTelegramNotifier({
+    token,
+    chatId,
+    ...(process.env.LOTTE_DEEPLINK ? { deepLinkTemplate: process.env.LOTTE_DEEPLINK } : {}),
+    onSendError: (err) => log(`알림 발송 실패: ${err}`),
+  });
+
+  const watcher = new Watcher(spec, {
+    listShowtimes: lotte.listShowtimes,
+    fetchSeatMap: lotte.fetchSeatMap,
+    notify: tg.notify,
+    now: () => Date.now(),
+    onError: (stage, err, ctx) => log(`${stage} 실패 [${ctx}] ${msg(err)}`),
+  });
+
+  log(`감시 시작 · 지점 ${spec.theaters.length} · 날짜 ${spec.dates.join(', ')}`);
+  log(`조건 ${spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`} · 동작 ${spec.action}`);
+  log(`만료 ${spec.expiresAt}`);
+
+  for (;;) {
+    const res = await watcher.runOnce();
+
+    if (res.offline) {
+      log(`조회가 전부 실패했습니다. ${Math.round(res.nextWakeMs / 1000)}초 뒤 재시도합니다.`);
+    } else {
+      const line = `회차 ${res.polled} · 변화 ${res.targets} · 알림 ${res.alerts.length}`;
+      log(res.alerts.length ? `${line}  ← 발송` : line);
+    }
+
+    for (const a of res.alerts) {
+      const seats = a.candidate.seats.map((s) => `${s.row}${s.col}`).join(', ');
+      log(`  ${a.showtime.movieName} ${a.showtime.startTime} ${a.showtime.screenName} → ${seats}`);
+
+      // 두 엔드포인트가 서로 다른 계산으로 같은 사실을 말한다.
+      // 어긋나면 계약이 바뀐 것이니 조용히 넘기지 않는다.
+      const check = crossCheck(a.seatMap, [a.showtime]);
+      if (!check.ok) {
+        log(`  ⚠ 잔여석 불일치 — 좌석맵 ${check.fromSeatMap} vs 카운트 ${check.fromCounts}`);
+      }
+    }
+
+    if (res.nextWakeMs === STOP) {
+      log('감시 종료 — 남은 회차가 없거나 만료되었습니다.');
+      return;
+    }
+    await sleep(res.nextWakeMs);
+  }
+}
+
+function need(key: string): string {
+  const v = process.env[key];
+  if (!v) {
+    console.error(`환경변수 ${key} 가 필요합니다. .env.example 을 참고하세요.`);
+    process.exit(1);
+  }
+  return v;
+}
+
+function log(s: string): void {
+  const t = new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Seoul' });
+  console.log(`[${t}] ${s}`);
+}
+
+function msg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+main().catch((e) => {
+  console.error(msg(e));
+  process.exit(1);
+});
