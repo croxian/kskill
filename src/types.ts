@@ -8,10 +8,15 @@
 export type Chain = 'lotte' | 'megabox' | 'cgv';
 
 /**
- * blocked = 장애인석·거리두기·고장 등 "비어 있지만 살 수 없는" 좌석.
- * free 와 반드시 구분해야 한다. 합치면 잡을 수 없는 자리에 알림이 간다.
+ * free 가 아닌 것을 셋으로 나눈다. 셋 다 지금은 못 사지만 앞날이 다르다.
+ *
+ *   sold    이미 팔렸다. 취소가 나야 돌아온다.
+ *   held    남이 결제 화면에서 붙잡고 있다. 몇 분 뒤 풀릴 수 있다.
+ *   blocked 장애인석·거리두기 등. 영원히 안 열린다.
+ *
+ * free 와 나머지를 합치면 잡을 수 없는 자리에 알림이 간다.
  */
-export type SeatState = 'free' | 'sold' | 'blocked';
+export type SeatState = 'free' | 'sold' | 'held' | 'blocked';
 
 export interface Seat {
   /** 체인 원본 좌석 ID. 점유 단계에서 그대로 필요하다 (롯데: SeatNo, 예: "1H12"). */

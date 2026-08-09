@@ -128,6 +128,7 @@ export function parseSeatMap(
 function toState(code: number | undefined): SeatState {
   if (code === SEAT_STATUS.FREE) return 'free';
   if (code === SEAT_STATUS.SOLD) return 'sold';
+  if (code === SEAT_STATUS.HELD) return 'held';
   return 'blocked';
 }
 

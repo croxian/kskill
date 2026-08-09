@@ -13,6 +13,8 @@ import { esc } from './telegram.js';
 const CH = {
   free: '.',
   sold: '#',
+  /** 남이 붙잡고 있는 중. 곧 풀릴 수 있어 sold 와 구분해 보여준다. */
+  held: 'x',
   blocked: ' ',
   target: 'O',
 } as const;
@@ -55,6 +57,7 @@ export function renderSeatMapText(map: SeatMap, opts: MapRenderOpts = {}): strin
       else if (target.has(seat.id)) line += CH.target;
       else if (seat.state === 'free') line += CH.free;
       else if (seat.state === 'sold') line += CH.sold;
+      else if (seat.state === 'held') line += CH.held;
       else line += CH.blocked;
     }
     lines.push(`${row.padEnd(2)}${line}`);
@@ -88,6 +91,7 @@ export function renderAlert(a: AlertBody): string {
   const labels = a.seats.map((s) => `${s.row}${s.col}`).join(', ');
   const kind = a.mode === 'single' ? '단석' : `${a.seats.length}연석`;
   const free = a.seatMap.seats.filter((s) => s.state === 'free').length;
+  const held = a.seatMap.seats.filter((s) => s.state === 'held').length;
 
   const head = [
     `🎟 <b>빈 좌석 발견</b>`,
@@ -97,7 +101,8 @@ export function renderAlert(a: AlertBody): string {
     `${formatDate(a.showtime.playDate)} ${a.showtime.startTime}`,
     ``,
     `좌석 <b>${esc(labels)}</b> · ${kind}`,
-    `이 회차 잔여 ${free}석`,
+    // 지금 남이 붙잡고 있는 좌석 수는 그대로 경쟁 강도다.
+    held ? `이 회차 잔여 ${free}석 · 선점 중 ${held}석` : `이 회차 잔여 ${free}석`,
     ``,
   ];
 

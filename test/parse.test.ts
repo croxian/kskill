@@ -81,10 +81,24 @@ describe('parseSeatMap', () => {
     ]);
   });
 
-  it('비어 있지만 팔지 않는 좌석은 blocked 로 따로 둔다', () => {
-    // 20 / 23 / 28 / 80 = 19석. free 에 섞이면 잡을 수 없는 자리에 알림이 간다.
-    expect(map.seats.filter((s) => s.state === 'blocked')).toHaveLength(19);
+  it('살 수 없는 좌석을 앞날에 따라 셋으로 가른다', () => {
+    // free 에 섞이면 잡을 수 없는 자리에 알림이 간다.
     expect(map.seats.filter((s) => s.state === 'sold')).toHaveLength(335);
+    expect(map.seats.filter((s) => s.state === 'held')).toHaveLength(1); // code 20
+    expect(map.seats.filter((s) => s.state === 'blocked')).toHaveLength(18); // 23/28/80
+  });
+
+  /**
+   * 코드 20 은 남이 결제 화면에서 붙잡고 있는 상태다. 실측에서 좌석 하나를
+   * 선택하자 밖에서 조회한 그 좌석이 0 에서 20 으로 바뀌었다.
+   * sold 와 달리 몇 분 뒤 돌아올 수 있어 구분해 둘 값이 있다.
+   */
+  it('선점 중인 좌석을 판매 완료와 구분한다', () => {
+    const held = map.seats.find((s) => s.state === 'held')!;
+    expect(held.rawStatus).toBe(20);
+    expect(map.seats.filter((s) => s.state === 'blocked').every((s) => s.rawStatus !== 20)).toBe(
+      true,
+    );
   });
 
   it('통로 구획 번호를 그대로 가져온다', () => {
@@ -114,7 +128,7 @@ describe('parseSeatMap', () => {
 
     expect(sold.rawStatus).toBe(50);
     expect(free.rawStatus).toBe(0);
-    expect([20, 23, 28, 80]).toContain(blocked.rawStatus);
+    expect([23, 28, 80]).toContain(blocked.rawStatus);
   });
 });
 
