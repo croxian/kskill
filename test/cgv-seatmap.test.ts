@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assignGroups,
+  CGV_SEAT_RULES,
+  dedupeSeats,
   splitLabel,
   toSeatState,
   type RawCgvSeat,
@@ -34,15 +36,23 @@ describe('좌석 상태 판정', () => {
     expect(toSeatState(SELECTED)).toBe('held');
   });
 
-  it('disabled 좌석은 살 수 없다', () => {
+  /**
+   * 실측에서 disabled 144개와 seatMap_seatDisabled 144개가 정확히 일치했다.
+   * CGV 에서 disabled 는 "비어 있지만 못 산다" 가 아니라 "팔렸다" 는 뜻이다.
+   */
+  it('disabled 는 판매완료를 뜻한다', () => {
     expect(toSeatState({ ...SELECTED, className: 'seatMap_seatNumber__x', disabled: true })).toBe(
-      'blocked',
+      'sold',
     );
   });
 
-  it('title 로도 판매완료를 가려낸다', () => {
-    const sold = { ...SELECTED, className: 'seatMap_seatNumber__x', title: '판매완료' };
-    expect(toSeatState(sold)).toBe('sold');
+  /**
+   * title 로 판정하려던 계획은 접었다. 실측에서 400개 중 398개가 빈 값이었고
+   * 채워진 둘은 내가 고른 좌석의 "선택됨" 뿐이었다. class 로만 본다.
+   */
+  it('title 은 판정에 쓰지 않는다', () => {
+    const free = { ...SELECTED, className: 'seatMap_seatNormal__x', title: '' };
+    expect(toSeatState(free)).toBe('free');
   });
 });
 
@@ -77,5 +87,67 @@ describe('assignGroups', () => {
       })),
     );
     expect(new Set(seats.map((s) => s.group)).size).toBe(1);
+  });
+});
+
+describe('중복 좌석', () => {
+  const twin = (over: Partial<RawCgvSeat>): RawCgvSeat => ({
+    id: '00100100010001', label: 'A1',
+    className: 'seatMap_seatNumber__x seatMap_seatNormal__y',
+    title: '', disabled: false, x: 38, y: 38, ...over,
+  });
+
+  /**
+   * CGV 좌석맵은 DOM 에 좌석을 두 벌 렌더한다. 실측에서 200석 관이 400개로
+   * 잡혔고 x 간격에 0 이 반복됐다. 그대로 두면 잔여수가 정확히 두 배가 된다.
+   */
+  it('같은 좌석이 두 번 잡히면 하나로 줄인다', () => {
+    expect(dedupeSeats([twin({}), twin({})])).toHaveLength(1);
+  });
+
+  it('두 벌 중 상태가 반영된 쪽을 남긴다', () => {
+    const plain = twin({});
+    const active = twin({ className: 'seatMap_seatNumber__x seatMap_active__z' });
+
+    expect(toSeatState(dedupeSeats([plain, active])[0]!)).toBe('held');
+    expect(toSeatState(dedupeSeats([active, plain])[0]!)).toBe('held');
+  });
+
+  it('서로 다른 좌석은 남긴다', () => {
+    expect(dedupeSeats([twin({}), twin({ id: '2', label: 'A2' })])).toHaveLength(2);
+  });
+});
+
+describe('실측 class 조합', () => {
+  const seat = (className: string, disabled = false): RawCgvSeat => ({
+    id: 'x', label: 'A1', className, title: '', disabled, x: 0, y: 0,
+  });
+
+  /** 판매완료에도 seatNormal 이 함께 붙는다. 순서를 잘못 보면 팔린 자리를 빈자리로 센다. */
+  it('판매완료가 seatNormal 과 같이 와도 sold 로 본다', () => {
+    expect(toSeatState(seat('seatMap_seatDisabled__a seatMap_seatNormal__b', true))).toBe('sold');
+  });
+
+  it('선택 가능한 좌석', () => {
+    expect(toSeatState(seat('seatMap_seatNormal__a seatMap_seatNumber__b'))).toBe('free');
+  });
+
+  /** 스윗박스는 2석 묶음이라 값도 다르고 혼자 사기 어렵다. 장애인석도 마찬가지. */
+  it('스윗박스와 장애인석은 기본적으로 뺀다', () => {
+    expect(toSeatState(seat('seatMap_seatNumber__a seatMap_seatSweetbox__b'))).toBe('blocked');
+    expect(toSeatState(seat('seatMap_seatNormal__a seatMap_seatPreferential__b'))).toBe('blocked');
+  });
+
+  it('원하면 켤 수 있다', () => {
+    const rules = { ...CGV_SEAT_RULES, allowSweetbox: true };
+    expect(toSeatState(seat('seatMap_seatNumber__a seatMap_seatSweetbox__b'), rules)).toBe('free');
+  });
+});
+
+describe('스윗박스 라벨', () => {
+  /** '연접좌석N5' 처럼 한글 접두어가 붙는다. 앞에서 맞추면 통째로 실패한다. */
+  it('한글 접두어가 붙어도 행과 번호를 뽑는다', () => {
+    expect(splitLabel('연접좌석N5')).toEqual({ row: 'N', col: 5 });
+    expect(splitLabel('연접좌석N14')).toEqual({ row: 'N', col: 14 });
   });
 });

@@ -54,47 +54,85 @@ export async function readRawSeats(page: Page): Promise<RawCgvSeat[]> {
 /**
  * 상태 판정 규칙.
  *
- * class 접두어와 title 을 함께 본다. 어느 쪽이 신뢰할 만한지는 실측으로
- * 정해야 하므로 규칙을 밖에서 갈아끼울 수 있게 뒀다.
+ * 실측 결과 title 은 거의 비어 있다 (400개 중 398개가 빈 값). class 로만 본다.
+ *
+ *   seatMap_seatNormal                          선택 가능      230
+ *   seatMap_seatDisabled + seatMap_seatNormal   판매완료       144
+ *   seatMap_seatSweetbox                        스윗박스 2연석  20
+ *   seatMap_seatPreferential                    장애인석         4
+ *   seatMap_active                              내가 고른 것
+ *
+ * 주의: 판매완료 좌석에도 seatMap_seatNormal 이 함께 붙는다.
+ * disabled 를 먼저 보지 않으면 팔린 자리를 빈자리로 센다.
  */
 export interface CgvSeatRules {
-  /** 이 접두어가 class 에 있으면 살 수 있는 좌석 */
   freeClass: string;
-  /** 이미 팔린 좌석 */
   soldClass: string;
   /** 지금 내가 고른 좌석. free 로 세면 잔여수가 부풀려진다. */
   activeClass: string;
-  /** class 로 못 가리면 title 로 본다. */
-  freeTitle?: RegExp;
-  soldTitle?: RegExp;
+  /** 2석 묶음 커플석. 값도 다르고 혼자 사기 어렵다. */
+  sweetboxClass: string;
+  /** 장애인석. 비어 있어도 아무나 살 자리가 아니다. */
+  preferentialClass: string;
+  /** 기본은 제외. 원하면 켠다. */
+  allowSweetbox?: boolean;
+  allowPreferential?: boolean;
 }
 
-/**
- * 실측 전 초기값.
- *
- * seatNormal 과 active 는 확인했다 — L5 를 선택한 상태의 요소에서 나왔다.
- * 판매완료 좌석의 class 는 아직 모른다. scripts/cgv-seatmap.ts 로 확인한다.
- */
 export const CGV_SEAT_RULES: CgvSeatRules = {
   freeClass: 'seatMap_seatNormal',
-  soldClass: 'seatMap_seatDisabled', // ← 실측 필요
+  soldClass: 'seatMap_seatDisabled',
   activeClass: 'seatMap_active',
-  soldTitle: /판매완료|예매완료|선택불가/,
+  sweetboxClass: 'seatMap_seatSweetbox',
+  preferentialClass: 'seatMap_seatPreferential',
 };
 
 export function toSeatState(raw: RawCgvSeat, rules = CGV_SEAT_RULES): SeatState {
-  if (raw.className.includes(rules.activeClass)) return 'held'; // 내가 잡은 것
-  if (raw.className.includes(rules.soldClass)) return 'sold';
-  if (rules.soldTitle?.test(raw.title)) return 'sold';
-  if (raw.disabled) return 'blocked';
-  if (raw.className.includes(rules.freeClass)) return 'free';
+  const cls = raw.className;
+
+  if (cls.includes(rules.activeClass)) return 'held';
+  // 판매완료에도 seatNormal 이 붙으므로 이걸 먼저 봐야 한다.
+  if (cls.includes(rules.soldClass) || raw.disabled) return 'sold';
+  if (cls.includes(rules.sweetboxClass)) return rules.allowSweetbox ? 'free' : 'blocked';
+  if (cls.includes(rules.preferentialClass)) {
+    return rules.allowPreferential ? 'free' : 'blocked';
+  }
+  if (cls.includes(rules.freeClass)) return 'free';
   return 'blocked';
 }
 
-/** 'L5' → { row: 'L', col: 5 } */
+/**
+ * 라벨에서 행과 번호를 뽑는다.
+ *
+ * 스윗박스는 '연접좌석N5' 처럼 한글 접두어가 붙는다. 앞에서부터 맞추면
+ * 통째로 실패해 row 가 '연접좌석N5', col 이 0 이 된다.
+ * 뒤에서 '문자+숫자' 만 집어낸다.
+ */
 export function splitLabel(label: string): { row: string; col: number } {
-  const m = label.match(/^([A-Za-z]+)(\d+)$/);
+  const m = label.match(/([A-Za-z]+)\s*(\d+)\s*$/);
   return m ? { row: m[1]!.toUpperCase(), col: Number(m[2]) } : { row: label, col: 0 };
+}
+
+/**
+ * 같은 좌석이 두 번 잡히는 걸 걸러낸다.
+ *
+ * CGV 좌석맵은 DOM 에 좌석을 두 벌 렌더한다 — 실측에서 200석짜리 관이
+ * 400개로 잡혔고 x 간격에 0 이 반복됐다. 그대로 두면 잔여수가 정확히
+ * 두 배가 되고, 연석 판정도 같은 자리를 두 번 세서 무너진다.
+ *
+ * 두 벌 중 상태가 반영된 쪽(선택됨 등)을 남긴다.
+ */
+export function dedupeSeats(raw: RawCgvSeat[]): RawCgvSeat[] {
+  const byId = new Map<string, RawCgvSeat>();
+  for (const r of raw) {
+    const key = r.id || `${r.label}@${r.x},${r.y}`;
+    const prev = byId.get(key);
+    const better =
+      !prev ||
+      (!prev.className.includes('seatMap_active') && r.className.includes('seatMap_active'));
+    if (better) byId.set(key, r);
+  }
+  return [...byId.values()];
 }
 
 /**
@@ -133,7 +171,7 @@ export async function readSeatMap(
   meta: { theaterId: string; screenId: string; playDate: string; playSequence: string },
   rules = CGV_SEAT_RULES,
 ): Promise<SeatMap> {
-  const raw = await readRawSeats(page);
+  const raw = dedupeSeats(await readRawSeats(page));
 
   const seats: Seat[] = raw
     .filter((r) => r.id)
