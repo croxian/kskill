@@ -5,7 +5,7 @@ import { crossCheck } from './adapters/lotte/parse.js';
 import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
 import { LotteSeatHolder } from './hold/lotte.js';
-import { LOTTE_SELECTORS, selectorsAreStubs } from './hold/selectors.js';
+import { LOTTE_FLOW, selectorsAreStubs } from './hold/selectors.js';
 import { HoldManager } from './hold/session.js';
 import { createTelegramNotifier } from './notify/index.js';
 import type { Alert } from './watch/loop.js';
@@ -29,7 +29,7 @@ async function main() {
   const chatId = need('TG_CHAT_ID');
 
   // 셀렉터가 아직 실측 전이면 hold 모드는 조용히 실패한다. 시작 전에 막는다.
-  if (spec.action === 'hold' && selectorsAreStubs(LOTTE_SELECTORS)) {
+  if (spec.action === 'hold' && selectorsAreStubs(LOTTE_FLOW)) {
     console.error('좌석 확보 셀렉터가 아직 실측되지 않았습니다.');
     console.error('  npm run record  로 예매 흐름을 녹화해 src/hold/selectors.ts 를 채우세요.');
     console.error('  그 전까지는 watch.json 의 action 을 "notify" 로 두세요.');
@@ -59,11 +59,8 @@ async function main() {
     spec.action === 'hold'
       ? new HoldManager(
           {
-            holder: new LotteSeatHolder({
-              ...(process.env.LOTTE_DEEPLINK
-                ? { deepLinkTemplate: process.env.LOTTE_DEEPLINK }
-                : {}),
-            }),
+            // 롯데에는 회차 딥링크가 없어 예매 첫 화면부터 UI 를 밟는다.
+            holder: new LotteSeatHolder(),
             now: () => Date.now(),
             sleep,
             onCountdown: async (_r, left) => {

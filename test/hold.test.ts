@@ -8,7 +8,14 @@ import {
   type ReleaseReason,
   type SeatHolder,
 } from '../src/hold/session.js';
-import { LOTTE_SELECTORS, seatSelector, selectorsAreStubs } from '../src/hold/selectors.js';
+import {
+  dayNamePattern,
+  LOTTE_FLOW,
+  movieNamePattern,
+  seatSelector,
+  selectorsAreStubs,
+  showtimeNamePattern,
+} from '../src/hold/selectors.js';
 import type { Seat, Showtime } from '../src/types.js';
 
 const SEATS: Seat[] = [
@@ -228,18 +235,42 @@ describe('HoldManager — 실패', () => {
 
 describe('셀렉터', () => {
   it('좌석 셀렉터에 좌석 값을 채운다', () => {
-    const sel = { ...LOTTE_SELECTORS, seat: '[data-x="{seat}"]', seatKey: 'id' as const };
-    expect(seatSelector(sel, SEATS[0]!)).toBe('[data-x="1J10"]');
-
-    const byLabel = { ...sel, seatKey: 'label' as const };
-    expect(seatSelector(byLabel, SEATS[0]!)).toBe('[data-x="J10"]');
+    const byId = { ...LOTTE_FLOW, seat: '[data-x="{seat}"]', seatKey: 'id' as const };
+    expect(seatSelector(byId, SEATS[0]!)).toBe('[data-x="1J10"]');
+    expect(seatSelector({ ...byId, seatKey: 'label' }, SEATS[0]!)).toBe('[data-x="J10"]');
+    expect(seatSelector({ ...byId, seatKey: 'col' }, SEATS[0]!)).toBe('[data-x="10"]');
   });
 
   /**
-   * 이 파일의 값은 스크린샷에서 읽은 추정이지 실측이 아니다.
-   * 실측 전에 감시기를 hold 모드로 돌리면 조용히 실패한다.
+   * 회차 버튼 이름에는 잔여석 수가 들어간다.
+   *   "상영시간 17:20 종료 20:22 잔여석 35 / ..."
+   * 우리가 보는 사이에도 변하므로 시작 시각으로만 맞춰야 한다.
    */
-  it('아직 실측 전임을 스스로 안다', () => {
-    expect(selectorsAreStubs(LOTTE_SELECTORS)).toBe(true);
+  it('회차는 잔여석이 아니라 시작 시각으로 맞춘다', () => {
+    const re = showtimeNamePattern('17:20');
+    expect(re.test('상영시간 17:20 종료 20:22 잔여석 35 / 342')).toBe(true);
+    expect(re.test('상영시간 17:20 종료 20:22 잔여석 12 / 342')).toBe(true); // 잔여석이 변해도
+    expect(re.test('상영시간 19:10 종료 22:12 잔여석 35 / 342')).toBe(false);
+  });
+
+  it('영화는 관람등급을 빼고 제목으로 맞춘다', () => {
+    expect(movieNamePattern('오디세이').test('세 관람가 오디세이')).toBe(true);
+    expect(movieNamePattern('오디세이').test('12세 관람가 스파이더맨')).toBe(false);
+  });
+
+  it('날짜는 일 + 요일 형식을 맞춘다', () => {
+    const re = dayNamePattern('20260811');
+    expect(re.test('11 화')).toBe(true);
+    expect(re.test('1 토')).toBe(false);
+    expect(re.test('21 금')).toBe(false);
+  });
+
+  /**
+   * codegen 은 좌석을 getByRole('link', { name: '24' }).first() 로 잡았다.
+   * 접근성 이름이 좌석 번호뿐이라 열이 다른 같은 번호와 구분되지 않는다.
+   * 실측 전에 hold 모드로 돌리면 엉뚱한 열을 클릭한다 — 조용히 틀리는 종류다.
+   */
+  it('좌석 셀렉터가 아직 실측 전임을 스스로 안다', () => {
+    expect(selectorsAreStubs(LOTTE_FLOW)).toBe(true);
   });
 });
