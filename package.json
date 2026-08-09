@@ -12,7 +12,8 @@
     "watch": "tsx --env-file-if-exists=.env src/main.ts",
     "probe": "tsx scripts/probe-hold.ts",
     "browser": "playwright install chromium",
-    "login": "playwright open --user-data-dir=.profile https://www.lottecinema.co.kr"
+    "login": "playwright open --user-data-dir=.profile https://www.lottecinema.co.kr",
+    "record": "playwright codegen --user-data-dir=.profile https://www.lottecinema.co.kr"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

@@ -4,7 +4,11 @@ import { createLotteAdapter } from './adapters/lotte/adapter.js';
 import { crossCheck } from './adapters/lotte/parse.js';
 import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
+import { LotteSeatHolder } from './hold/lotte.js';
+import { LOTTE_SELECTORS, selectorsAreStubs } from './hold/selectors.js';
+import { HoldManager } from './hold/session.js';
 import { createTelegramNotifier } from './notify/index.js';
+import type { Alert } from './watch/loop.js';
 import { Watcher } from './watch/loop.js';
 
 /**
@@ -24,6 +28,14 @@ async function main() {
   const token = need('TG_TOKEN');
   const chatId = need('TG_CHAT_ID');
 
+  // 셀렉터가 아직 실측 전이면 hold 모드는 조용히 실패한다. 시작 전에 막는다.
+  if (spec.action === 'hold' && selectorsAreStubs(LOTTE_SELECTORS)) {
+    console.error('좌석 확보 셀렉터가 아직 실측되지 않았습니다.');
+    console.error('  npm run record  로 예매 흐름을 녹화해 src/hold/selectors.ts 를 채우세요.');
+    console.error('  그 전까지는 watch.json 의 action 을 "notify" 로 두세요.');
+    process.exit(1);
+  }
+
   const lotte = createLotteAdapter(spec.theaters);
   const tg = createTelegramNotifier({
     token,
@@ -39,6 +51,34 @@ async function main() {
     now: () => Date.now(),
     onError: (stage, err, ctx) => log(`${stage} 실패 [${ctx}] ${msg(err)}`),
   });
+
+  // 동시 홀드는 1건뿐이므로 진행 중인 알림 하나만 들고 있으면 된다.
+  let held: Alert | null = null;
+
+  const holdManager =
+    spec.action === 'hold'
+      ? new HoldManager(
+          {
+            holder: new LotteSeatHolder({
+              ...(process.env.LOTTE_DEEPLINK
+                ? { deepLinkTemplate: process.env.LOTTE_DEEPLINK }
+                : {}),
+            }),
+            now: () => Date.now(),
+            sleep,
+            onCountdown: async (_r, left) => {
+              if (held) await tg.updateHold(held, left);
+              if (left % 60 === 0 || left <= 30) log(`  결제까지 ${left}초`);
+            },
+            onReleased: async (_r, reason) => {
+              log(`  홀드 종료 (${reason}) — 좌석을 놓았습니다`);
+              if (held && reason !== 'cancelled') await tg.holdExpired(held);
+            },
+            onError: (_r, err) => log(`  좌석 확보 실패: ${msg(err)}`),
+          },
+          { holdSeconds: Number(process.env.HOLD_SECONDS ?? 300) },
+        )
+      : null;
 
   log(`감시 시작 · 지점 ${spec.theaters.length} · 날짜 ${spec.dates.join(', ')}`);
   log(`조건 ${spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`} · 동작 ${spec.action}`);
@@ -64,6 +104,14 @@ async function main() {
       const check = crossCheck(a.seatMap, [a.showtime]);
       if (!check.ok) {
         log(`  ⚠ 잔여석 불일치 — 좌석맵 ${check.fromSeatMap} vs 카운트 ${check.fromCounts}`);
+      }
+
+      // 확보하는 동안은 감시를 멈춘다. 동시에 여러 자리를 잡아두지 않는다.
+      if (holdManager) {
+        held = a;
+        log('  좌석 확보 시도 — 결제 화면 직전에서 멈춥니다');
+        await holdManager.run({ showtime: a.showtime, seats: a.candidate.seats });
+        held = null;
       }
     }
 
