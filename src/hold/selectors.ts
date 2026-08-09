@@ -30,14 +30,28 @@ export interface LotteFlow {
   /**
    * 좌석 하나. {seat} 자리에 좌석 값이 들어간다.
    *
-   * ⚠️ 여기만 아직 실측 전이다.
-   * codegen 은 `getByRole('link', { name: '24' }).first()` 를 뱉었는데,
-   * 접근성 이름이 좌석 **번호뿐**이라 열이 다른 같은 번호 좌석과 구분되지 않는다.
-   * `.first()` 로 넘기면 엉뚱한 열을 클릭한다 — 조용히 틀리는 종류다.
-   * 좌석 <a> 의 실제 속성을 보고 채워야 한다.
+   * 좌석 <a> 는 이렇게 생겼다:
+   *   <a data-seat="B2" seat-code="1B02" seat-statuscode="0"
+   *      seat-group="grNum7" alt="좌석 번호:B2 일반석">…</a>
+   *
+   * seat-code 가 GetSeats 의 SeatNo 와 **같은 값**이라 그대로 쓴다.
+   * codegen 은 getByRole('link', { name: '24' }).first() 를 뱉었는데,
+   * 접근성 이름이 좌석 번호뿐이라 A24·B24·C24 가 구분되지 않는다.
+   * 그걸 썼으면 엉뚱한 열을 클릭하고도 에러 없이 넘어갔을 것이다.
    */
   seat: string;
   seatKey: SeatKey;
+  /**
+   * 좌석 상태 코드가 담긴 속성.
+   *
+   * DOM 에 SeatStatusCode 가 그대로 실려 있어서, 클릭 직전에 아직 0(판매 가능)
+   * 인지 확인할 수 있다. 페이지를 그린 뒤 남이 가져갔다면 여기서 걸린다.
+   */
+  seatStatusAttr: string;
+  /** 판매 가능을 뜻하는 상태 값. */
+  seatFreeValue: string;
+  /** 셀렉터를 실제 DOM 으로 확인했는가. false 면 hold 모드를 막는다. */
+  measured: boolean;
   /** 좌석 선택 후 다음 단계로. 결제 화면의 같은 이름 버튼과 다른 요소다. */
   toPayment: string;
   /** 결제수단 화면에 도달했음을 알리는 요소. 여기 닿으면 멈춘다. */
@@ -61,8 +75,11 @@ export const LOTTE_FLOW: LotteFlow = {
   youthStepper: '#person_20',
   stepperPlus: '증가',
   toSeatStep: '인원/좌석 선택',
-  seat: '[data-seat="{seat}"]', // ← 실측 필요
+  seat: '[seat-code="{seat}"]',
   seatKey: 'id',
+  seatStatusAttr: 'seat-statuscode',
+  seatFreeValue: '0',
+  measured: true,
   toPayment: '결제하기',
   paymentMarker: 'text=최종 결제수단',
   loggedOut: 'text=로그인',
@@ -98,9 +115,9 @@ export function dayNamePattern(playDate: string): RegExp {
   return new RegExp(`^\\s*${day}\\s`);
 }
 
-/** 자리표시자가 그대로 남아 있으면 아직 실측 전이다. */
+/** 실제 DOM 으로 확인하지 않은 셀렉터로는 hold 모드를 돌리지 않는다. */
 export function selectorsAreStubs(flow: LotteFlow): boolean {
-  return flow.seat.includes('data-seat=');
+  return !flow.measured;
 }
 
 function escapeRe(s: string): string {

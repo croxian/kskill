@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { LotteSeatHolder, SeatTakenError } from '../src/hold/lotte.js';
 import {
   HoldBusyError,
   HoldManager,
@@ -233,6 +234,137 @@ describe('HoldManager — 실패', () => {
   });
 });
 
+/**
+ * 예매 화면을 흉내 내는 최소한의 가짜.
+ * 홀더가 실제로 쓰는 표면만 구현한다.
+ */
+function fakeBrowser(opts: { seatStatus?: Record<string, string>; paymentVisible?: boolean } = {}) {
+  const clicks: string[] = [];
+  const closed = { count: 0 };
+  const seatStatus = opts.seatStatus ?? {};
+
+  const locator = (sel: string) => ({
+    isVisible: async () => false,
+    getAttribute: async (_name: string) => {
+      const m = sel.match(/seat-code="([^"]+)"/);
+      return m ? (seatStatus[m[1]!] ?? '0') : null;
+    },
+    click: async () => {
+      clicks.push(sel);
+    },
+    waitFor: async () => {
+      if (opts.paymentVisible === false) throw new Error('timeout');
+    },
+    first: () => locator(sel),
+    textContent: async () => null,
+    // 지점 목록은 스크롤 컨테이너로 범위를 좁혀서 찾는다
+    getByRole: (role: string, o: { name: unknown }) => ({
+      click: async () => {
+        clicks.push(`${sel}>${role}:${String(o.name)}`);
+      },
+    }),
+  });
+
+  const page = {
+    setDefaultTimeout: () => {},
+    goto: async () => {},
+    locator,
+    getByRole: (role: string, o: { name: unknown }) => ({
+      click: async () => {
+        clicks.push(`${role}:${String(o.name)}`);
+      },
+      getByRole: (r2: string, o2: { name: unknown }) => ({
+        click: async () => {
+          clicks.push(`${role}>${r2}:${String(o2.name)}`);
+        },
+      }),
+    }),
+  };
+
+  const ctx = {
+    pages: () => [page],
+    newPage: async () => page,
+    close: async () => {
+      closed.count++;
+    },
+  };
+
+  return { clicks, closed, launch: async () => ctx as never };
+}
+
+describe('LotteSeatHolder — 화면 진행', () => {
+  const request = req();
+
+  it('예매 → 지점 → 영화 → 날짜 → 회차 → 좌석 순서로 밟는다', async () => {
+    const b = fakeBrowser();
+    const holder = new LotteSeatHolder({ launch: b.launch });
+
+    const session = await holder.hold(request);
+
+    expect(session.atPayment).toBe(true);
+    expect(b.clicks.join('\n')).toContain('link:예매');
+    // 인원을 좌석보다 먼저 누른다. 인원이 0 이면 좌석이 눌리지 않는다.
+    const audienceAt = b.clicks.findIndex((c) => c.includes('증가'));
+    const seatAt = b.clicks.findIndex((c) => c.includes('seat-code'));
+    expect(audienceAt).toBeGreaterThan(-1);
+    expect(audienceAt).toBeLessThan(seatAt);
+  });
+
+  it('좌석 수만큼 인원을 올린다', async () => {
+    const b = fakeBrowser();
+    await new LotteSeatHolder({ launch: b.launch }).hold(request);
+
+    expect(b.clicks.filter((c) => c.includes('증가'))).toHaveLength(2);
+  });
+
+  it('좌석을 seat-code 로 하나씩 클릭한다', async () => {
+    const b = fakeBrowser();
+    await new LotteSeatHolder({ launch: b.launch }).hold(request);
+
+    expect(b.clicks.filter((c) => c.startsWith('[seat-code'))).toEqual([
+      '[seat-code="1J10"]',
+      '[seat-code="1J11"]',
+    ]);
+  });
+
+  /**
+   * 좌석 <a> 에 SeatStatusCode 가 실려 있다. 그냥 클릭하면 아무 일도
+   * 일어나지 않고 결제 화면 대기에서 타임아웃으로 뒤늦게 실패한다.
+   */
+  it('그 사이 팔린 좌석은 클릭 전에 잡아낸다', async () => {
+    const b = fakeBrowser({ seatStatus: { '1J11': '50' } });
+    const holder = new LotteSeatHolder({ launch: b.launch });
+
+    await expect(holder.hold(request)).rejects.toThrow(SeatTakenError);
+    expect(b.clicks).not.toContain('[seat-code="1J11"]');
+  });
+
+  /** 잡다 만 상태로 두는 게 최악이다. 실패하면 반드시 컨텍스트를 닫는다. */
+  it('실패하면 브라우저를 닫아 좌석을 놓는다', async () => {
+    const b = fakeBrowser({ seatStatus: { '1J10': '50' } });
+
+    await expect(new LotteSeatHolder({ launch: b.launch }).hold(request)).rejects.toThrow();
+    expect(b.closed.count).toBe(1);
+  });
+
+  it('결제 화면에 못 닿으면 실패로 처리하고 닫는다', async () => {
+    const b = fakeBrowser({ paymentVisible: false });
+
+    await expect(new LotteSeatHolder({ launch: b.launch }).hold(request)).rejects.toThrow();
+    expect(b.closed.count).toBe(1);
+  });
+
+  it('release 는 여러 번 불려도 한 번만 닫는다', async () => {
+    const b = fakeBrowser();
+    const session = await new LotteSeatHolder({ launch: b.launch }).hold(request);
+
+    await session.release();
+    await session.release();
+
+    expect(b.closed.count).toBe(1);
+  });
+});
+
 describe('셀렉터', () => {
   it('좌석 셀렉터에 좌석 값을 채운다', () => {
     const byId = { ...LOTTE_FLOW, seat: '[data-x="{seat}"]', seatKey: 'id' as const };
@@ -266,11 +398,19 @@ describe('셀렉터', () => {
   });
 
   /**
-   * codegen 은 좌석을 getByRole('link', { name: '24' }).first() 로 잡았다.
-   * 접근성 이름이 좌석 번호뿐이라 열이 다른 같은 번호와 구분되지 않는다.
-   * 실측 전에 hold 모드로 돌리면 엉뚱한 열을 클릭한다 — 조용히 틀리는 종류다.
+   * 좌석 <a> 의 seat-code 가 GetSeats 의 SeatNo 와 같은 값이다.
+   * API 와 DOM 이 같은 키를 쓰므로 파싱한 id 를 그대로 넣으면 된다.
+   *
+   * codegen 이 뱉은 getByRole('link', { name: '24' }).first() 를 그대로 썼다면
+   * A24·B24·C24 가 구분되지 않아 엉뚱한 열을 클릭하고도 에러 없이 넘어갔을 것이다.
    */
-  it('좌석 셀렉터가 아직 실측 전임을 스스로 안다', () => {
-    expect(selectorsAreStubs(LOTTE_FLOW)).toBe(true);
+  it('좌석을 seat-code 로 고유하게 가리킨다', () => {
+    expect(seatSelector(LOTTE_FLOW, SEATS[0]!)).toBe('[seat-code="1J10"]');
+    expect(seatSelector(LOTTE_FLOW, SEATS[1]!)).toBe('[seat-code="1J11"]');
+  });
+
+  it('실측한 셀렉터로 인식한다', () => {
+    expect(selectorsAreStubs(LOTTE_FLOW)).toBe(false);
+    expect(selectorsAreStubs({ ...LOTTE_FLOW, measured: false })).toBe(true);
   });
 });

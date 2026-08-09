@@ -149,7 +149,15 @@ export class LotteSeatHolder implements SeatHolder {
     for (const seat of seats) {
       const label = `${seat.row}${seat.col}`;
       const target = page.locator(seatSelector(this.flow, seat));
-      if (!(await target.isEnabled().catch(() => false))) throw new SeatTakenError(label);
+
+      // 좌석 <a> 에 SeatStatusCode 가 그대로 실려 있다. 페이지를 그린 뒤
+      // 남이 가져갔다면 여기서 걸린다. 그냥 클릭하면 아무 일도 안 일어나고
+      // 결제 화면 대기에서 타임아웃으로 뒤늦게 실패한다.
+      const status = await target
+        .getAttribute(this.flow.seatStatusAttr)
+        .catch(() => null);
+      if (status !== this.flow.seatFreeValue) throw new SeatTakenError(label);
+
       await this.step(`좌석 ${label}`, () => target.click());
     }
   }
