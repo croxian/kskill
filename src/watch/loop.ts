@@ -23,15 +23,24 @@ import { matchesSpec, normalizeSpec, showtimeAt, type WatchSpec } from '../core/
 export interface Alert {
   spec: WatchSpec;
   showtime: Showtime;
-  candidate: Candidate;
-  seatMap: SeatMap;
+  /**
+   * 좌석 단위 후보. 좌석맵을 못 구하는 체인에서는 null 이다.
+   * 그때는 "이 회차에 자리가 났다" 까지만 알리고 좌석은 사람이 고른다.
+   */
+  candidate: Candidate | null;
+  seatMap: SeatMap | null;
 }
 
 export interface WatchDeps {
   /** 1단: 한 지점·한 날짜의 전 회차. 구역별로 쪼개져 와도 된다. */
   listShowtimes(theaterIdx: number, playDate: string): Promise<Showtime[]>;
-  /** 2단: 한 회차의 좌석맵. */
-  fetchSeatMap(showtime: Showtime): Promise<SeatMap>;
+  /**
+   * 2단: 한 회차의 좌석맵.
+   *
+   * 없어도 된다. 좌석맵을 구할 수 없는 체인에서는 1단 카운트만으로 알린다 —
+   * 좌석 블록·연석 판정은 못 하지만, 자리가 났다는 사실은 알려줄 수 있다.
+   */
+  fetchSeatMap?(showtime: Showtime): Promise<SeatMap>;
   notify(alert: Alert): Promise<void>;
   now(): number;
   /** 조회 실패를 삼키지 않고 밖으로 알린다. */
@@ -139,6 +148,19 @@ export class Watcher {
         if (!wasCold) for (const t of rest) this.pending.add(seatMapKey(t));
         suppressed = rest.length;
         break;
+      }
+
+      // 좌석맵을 구할 수 없는 체인이면 카운트만으로 알린다.
+      // 잔여수가 또 늘면 다시 알리도록 지문에 수를 넣는다.
+      if (!this.deps.fetchSeatMap) {
+        const fp = `${seatMapKey(showtime)}|n=${showtime.remainingSeats}`;
+        if (!this.dedupe.shouldSend(fp, now)) continue;
+
+        const alert: Alert = { spec, showtime, candidate: null, seatMap: null };
+        alerts.push(alert);
+        await this.deps.notify(alert);
+        if (spec.action === 'hold') break;
+        continue;
       }
 
       let map: SeatMap;

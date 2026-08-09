@@ -81,17 +81,40 @@ export function formatDate(playDate: string): string {
 
 export interface AlertBody {
   showtime: Showtime;
+  /** 좌석맵을 못 구하는 체인에서는 비어 있다. */
   seats: Seat[];
-  seatMap: SeatMap;
+  seatMap: SeatMap | null;
   mode: 'single' | 'adjacent';
   action: 'notify' | 'hold';
 }
 
+/**
+ * 좌석맵 없이 회차만 알린다.
+ *
+ * 좌석 단위 판정을 못 해도 "이 회차에 자리가 났다" 는 알려줄 수 있다.
+ * 알림이 늦는 것보다 좌석을 모르는 편이 낫다.
+ */
+export function renderCountAlert(a: AlertBody): string {
+  return [
+    `🎟 <b>자리가 났습니다</b>`,
+    ``,
+    `<b>${esc(a.showtime.movieName)}</b>`,
+    `${esc(a.showtime.theaterName)} · ${esc(a.showtime.screenName)}`,
+    `${formatDate(a.showtime.playDate)} ${a.showtime.startTime}`,
+    ``,
+    `잔여 <b>${a.showtime.remainingSeats}석</b> / ${a.showtime.totalSeats}`,
+    ``,
+    `<i>좌석은 직접 고르셔야 합니다.</i>`,
+  ].join('\n');
+}
+
 export function renderAlert(a: AlertBody): string {
+  if (!a.seatMap || a.seats.length === 0) return renderCountAlert(a);
+  const map = a.seatMap;
   const labels = a.seats.map((s) => `${s.row}${s.col}`).join(', ');
   const kind = a.mode === 'single' ? '단석' : `${a.seats.length}연석`;
-  const free = a.seatMap.seats.filter((s) => s.state === 'free').length;
-  const held = a.seatMap.seats.filter((s) => s.state === 'held').length;
+  const free = map.seats.filter((s) => s.state === 'free').length;
+  const held = map.seats.filter((s) => s.state === 'held').length;
 
   const head = [
     `🎟 <b>빈 좌석 발견</b>`,
@@ -106,13 +129,13 @@ export function renderAlert(a: AlertBody): string {
     ``,
   ];
 
-  const map = `<pre>${esc(renderSeatMapText(a.seatMap, { highlight: a.seats }))}</pre>`;
+  const grid = `<pre>${esc(renderSeatMapText(map, { highlight: a.seats }))}</pre>`;
   const tail =
     a.action === 'hold'
       ? `\n<i>좌석 확보를 시도합니다. 결제는 직접 하셔야 합니다.</i>`
       : `\n<i>알림 전용 모드입니다.</i>`;
 
-  return head.join('\n') + map + tail;
+  return head.join('\n') + grid + tail;
 }
 
 /** 좌석을 확보한 뒤. 남은 시간이 줄어들 때마다 이 메시지를 고쳐 쓴다. */

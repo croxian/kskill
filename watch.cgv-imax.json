@@ -1,0 +1,17 @@
+{
+  "id": "cgv-imax-odyssey",
+  "theaters": [
+    { "chain": "cgv", "theaterId": "0013", "label": "용산아이파크몰" },
+    { "chain": "cgv", "theaterId": "0059", "label": "영등포타임스퀘어" }
+  ],
+  "movies": ["30001323"],
+  "dates": ["20260812", "20260813", "20260814", "20260815", "20260816"],
+  "windows": [],
+  "screenPattern": "IMAX",
+  "block": null,
+  "party": { "mode": "single", "size": 1 },
+  "action": "notify",
+  "pollFloorSec": 45,
+  "maxAlertsPerRun": 5,
+  "expiresAt": "2026-08-16T23:59:00+09:00"
+}

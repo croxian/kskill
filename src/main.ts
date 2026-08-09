@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { createLotteAdapter } from './adapters/lotte/adapter.js';
+import { createAdapter } from './adapters/index.js';
 import { crossCheck } from './adapters/lotte/parse.js';
 import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
@@ -33,6 +33,11 @@ async function main() {
   const chatId = need('TG_CHAT_ID');
 
   // 셀렉터가 아직 실측 전이면 hold 모드는 조용히 실패한다. 시작 전에 막는다.
+  if (spec.action === 'hold' && spec.theaters.some((t) => t.chain !== 'lotte')) {
+    console.error('좌석 확보는 아직 롯데시네마만 지원합니다.');
+    console.error('  CGV·메가박스 지점이 섞여 있으면 action 을 "notify" 로 두세요.');
+    process.exit(1);
+  }
   if (spec.action === 'hold' && selectorsAreStubs(LOTTE_FLOW)) {
     console.error('좌석 확보 셀렉터가 아직 실측되지 않았습니다.');
     console.error('  npm run record  로 예매 흐름을 녹화해 src/hold/selectors.ts 를 채우세요.');
@@ -40,7 +45,8 @@ async function main() {
     process.exit(1);
   }
 
-  const lotte = createLotteAdapter(spec.theaters);
+  const chains = [...new Set(spec.theaters.map((t) => t.chain))];
+  const source = createAdapter(spec.theaters);
   const tg = createTelegramNotifier({
     token,
     chatId,
@@ -49,8 +55,10 @@ async function main() {
   });
 
   const watcher = new Watcher(spec, {
-    listShowtimes: lotte.listShowtimes,
-    fetchSeatMap: lotte.fetchSeatMap,
+    listShowtimes: source.listShowtimes,
+    // 좌석맵을 못 구하는 체인만 감시 중이면 아예 넘기지 않는다.
+    // 그러면 루프가 카운트만으로 알린다.
+    ...(source.canFetchSeatMap ? { fetchSeatMap: source.fetchSeatMap } : {}),
     notify: tg.notify,
     now: () => Date.now(),
     onError: (stage, err, ctx) => log(`${stage} 실패 [${ctx}] ${msg(err)}`),
@@ -90,7 +98,10 @@ async function main() {
         )
       : null;
 
-  log(`감시 시작 · 지점 ${spec.theaters.length} · 날짜 ${spec.dates.join(', ')}`);
+  log(`감시 시작 · ${chains.join('+')} · 지점 ${spec.theaters.length} · 날짜 ${spec.dates.join(', ')}`);
+  if (!source.canFetchSeatMap) {
+    log('좌석맵 미지원 체인 — 잔여수 변화만 알립니다 (좌석 블록·연석 판정 없음)');
+  }
   log(`조건 ${spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`} · 동작 ${spec.action}`);
   log(`만료 ${spec.expiresAt}`);
   if (holdManager) log(creds ? '자동 로그인 사용 가능' : '자동 로그인 없음 — 세션이 풀리면 알립니다');
@@ -136,18 +147,22 @@ async function main() {
     }
 
     for (const a of res.alerts) {
-      const seats = a.candidate.seats.map((s) => `${s.row}${s.col}`).join(', ');
+      const seats = a.candidate
+        ? a.candidate.seats.map((s) => `${s.row}${s.col}`).join(', ')
+        : `잔여 ${a.showtime.remainingSeats}석`;
       log(`  ${a.showtime.movieName} ${a.showtime.startTime} ${a.showtime.screenName} → ${seats}`);
 
       // 두 엔드포인트가 서로 다른 계산으로 같은 사실을 말한다.
       // 어긋나면 계약이 바뀐 것이니 조용히 넘기지 않는다.
-      const check = crossCheck(a.seatMap, [a.showtime]);
-      if (!check.ok) {
-        log(`  ⚠ 잔여석 불일치 — 좌석맵 ${check.fromSeatMap} vs 카운트 ${check.fromCounts}`);
+      if (a.seatMap) {
+        const check = crossCheck(a.seatMap, [a.showtime]);
+        if (!check.ok) {
+          log(`  ⚠ 잔여석 불일치 — 좌석맵 ${check.fromSeatMap} vs 카운트 ${check.fromCounts}`);
+        }
       }
 
       // 확보하는 동안은 감시를 멈춘다. 동시에 여러 자리를 잡아두지 않는다.
-      if (holdManager) {
+      if (holdManager && a.candidate) {
         held = a;
         log('  좌석 확보 시도 — 결제 화면 직전에서 멈춥니다');
         await holdManager.run({ showtime: a.showtime, seats: a.candidate.seats });

@@ -98,7 +98,7 @@ describe('Watcher — 첫 관측', () => {
     const res = await w.runOnce();
 
     expect(res.alerts).toHaveLength(1);
-    expect(res.alerts[0]!.candidate.seats.map((s) => `${s.row}${s.col}`)).toEqual(['J10', 'J11']);
+    expect(res.alerts[0]!.candidate!.seats.map((s) => `${s.row}${s.col}`)).toEqual(['J10', 'J11']);
   });
 
   it('baseline 으로 시작하면 기준만 잡고 조용히 있는다', async () => {

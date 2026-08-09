@@ -47,19 +47,19 @@ export function createTelegramNotifier(cfg: NotifierConfig) {
       return;
     }
     if (res.messageId !== undefined) {
-      messageIds.set(fingerprint(alert.candidate.seats, alert.showtime), res.messageId);
+      messageIds.set(alertKey(alert), res.messageId);
     }
   }
 
   /** 좌석을 확보한 뒤 남은 시간을 갱신한다. 새 메시지를 보내면 도배가 된다. */
   async function updateHold(alert: Alert, secondsLeft: number): Promise<SendResult> {
-    const id = messageIds.get(fingerprint(alert.candidate.seats, alert.showtime));
+    const id = messageIds.get(alertKey(alert));
     const text = renderHeld(toBody(alert), secondsLeft);
     return id === undefined ? client.sendMessage(text) : client.editMessage(id, text);
   }
 
   async function holdExpired(alert: Alert): Promise<SendResult> {
-    const key = fingerprint(alert.candidate.seats, alert.showtime);
+    const key = alertKey(alert);
     const id = messageIds.get(key);
     const text = renderExpired(toBody(alert));
     messageIds.delete(key);
@@ -74,10 +74,17 @@ export function createTelegramNotifier(cfg: NotifierConfig) {
   return { notify, updateHold, holdExpired, warn, client };
 }
 
+/** 좌석맵이 없으면 좌석 대신 회차로 메시지를 추적한다. */
+function alertKey(alert: Alert): string {
+  return alert.candidate
+    ? fingerprint(alert.candidate.seats, alert.showtime)
+    : `${alert.showtime.playDate}:${alert.showtime.screenId}:${alert.showtime.playSequence}`;
+}
+
 function toBody(alert: Alert): AlertBody {
   return {
     showtime: alert.showtime,
-    seats: alert.candidate.seats,
+    seats: alert.candidate?.seats ?? [],
     seatMap: alert.seatMap,
     mode: alert.spec.party.mode,
     action: alert.spec.action,
@@ -88,7 +95,7 @@ function buttons(alert: Alert, template?: string): InlineButton[][] {
   const url = buildDeepLink(alert.showtime, template);
   const rows: InlineButton[][] = [[{ text: '🎬 예매 화면 열기', url }]];
 
-  if (alert.spec.action === 'hold') {
+  if (alert.spec.action === 'hold' && alert.candidate) {
     const fp = fingerprint(alert.candidate.seats, alert.showtime);
     rows.push([
       { text: '✅ 지금 확보', callback_data: `hold:${fp}`.slice(0, 64) },

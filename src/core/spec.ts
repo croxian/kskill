@@ -35,8 +35,16 @@ export interface WatchSpec {
   dates: string[];
   /** 시작 시각 기준. 비우면 전 시간대. */
   windows: TimeWindow[];
-  /** 특정 상영관만 (IMAX·수퍼플렉스 등). 비우면 전체. */
+  /** 상영관 번호로 좁히기. 번호는 극장마다 달라서 여러 지점을 볼 땐 위험하다. */
   screens?: string[];
+  /**
+   * 상영관 **이름**으로 좁히기. 여러 지점을 감시할 땐 이쪽을 써야 한다.
+   *
+   * CGV 실측: IMAX 관 번호가 용산은 018, 영등포는 017 이다. 그런데 용산의
+   * 017 은 박찬욱관이라, 번호 목록으로 두 IMAX 를 잡으려 하면 엉뚱한 관이
+   * 딸려온다. 이름은 두 곳 다 "IMAX관" 으로 같다.
+   */
+  screenPattern?: string;
 
   // ── 좌석 조건 ──────────────────────────────────────────────
   block: SeatBlock | null;
@@ -95,6 +103,7 @@ export function inWindow(startTime: string, windows: TimeWindow[]): boolean {
 export function matchesSpec(s: Showtime, spec: WatchSpec): boolean {
   if (spec.movies.length > 0 && !spec.movies.includes(s.movieId)) return false;
   if (spec.screens?.length && !spec.screens.includes(s.screenId)) return false;
+  if (spec.screenPattern && !new RegExp(spec.screenPattern, 'i').test(s.screenName)) return false;
   return inWindow(s.startTime, spec.windows);
 }
 
