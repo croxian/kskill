@@ -112,11 +112,25 @@ async function main() {
 
   log(`감시 시작 · ${chains.join('+')} · 지점 ${spec.theaters.length} · 날짜 ${spec.dates.join(', ')}`);
   if (!source.canFetchSeatMap) {
-    log('좌석맵 미지원 체인 — 잔여수 변화만 알립니다 (좌석 블록·연석 판정 없음)');
+    // CGV 는 좌석맵을 폴링 때 못 뜯지만, 확보 모드에서는 화면에 들어가
+    // 직접 읽는다. 조건 판정이 아예 없는 것과는 다르다.
+    log(
+      spec.action === 'hold'
+        ? '알림은 잔여수 기준 · 좌석 블록과 연석 판정은 확보할 때 화면에서 적용됩니다'
+        : '좌석맵 미지원 체인 — 잔여수 변화만 알립니다 (좌석 블록·연석 판정 없음)',
+    );
   }
   log(`조건 ${spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`} · 동작 ${spec.action}`);
   log(`만료 ${spec.expiresAt}`);
-  if (holdManager) log(creds ? '자동 로그인 사용 가능' : '자동 로그인 없음 — 세션이 풀리면 알립니다');
+  if (holdManager) {
+    log(
+      holdChains.has('cgv')
+        ? 'CGV 는 로그인 캡차 때문에 자동 재로그인이 안 됩니다 — 세션이 풀리면 알립니다'
+        : creds
+          ? '자동 로그인 사용 가능'
+          : '자동 로그인 없음 — 세션이 풀리면 알립니다',
+    );
+  }
 
   /**
    * 세션 점검.
