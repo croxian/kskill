@@ -4,6 +4,7 @@ import { createAdapter } from './adapters/index.js';
 import { crossCheck } from './adapters/lotte/parse.js';
 import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
+import { CgvSeatHolder } from './hold/cgv.js';
 import { LotteSeatHolder } from './hold/lotte.js';
 import { LOTTE_FLOW, selectorsAreStubs } from './hold/selectors.js';
 import { CGV_SESSION_WARNING, CgvSessionKeeper } from './hold/cgv-session.js';
@@ -34,12 +35,17 @@ async function main() {
   const chatId = need('TG_CHAT_ID');
 
   // 셀렉터가 아직 실측 전이면 hold 모드는 조용히 실패한다. 시작 전에 막는다.
-  if (spec.action === 'hold' && spec.theaters.some((t) => t.chain !== 'lotte')) {
-    console.error('좌석 확보는 아직 롯데시네마만 지원합니다.');
-    console.error('  CGV·메가박스 지점이 섞여 있으면 action 을 "notify" 로 두세요.');
+  const holdChains = new Set(spec.theaters.map((t) => t.chain));
+  if (spec.action === 'hold' && holdChains.size > 1) {
+    // 동시 홀드 1건 규칙이 있어 체인이 섞이면 어느 홀더를 쓸지 정할 수 없다.
+    console.error('좌석 확보 모드에서는 한 번에 한 체인만 감시할 수 있습니다.');
     process.exit(1);
   }
-  if (spec.action === 'hold' && selectorsAreStubs(LOTTE_FLOW)) {
+  if (spec.action === 'hold' && holdChains.has('megabox')) {
+    console.error('메가박스는 아직 좌석 확보를 지원하지 않습니다. action 을 "notify" 로 두세요.');
+    process.exit(1);
+  }
+  if (spec.action === 'hold' && holdChains.has('lotte') && selectorsAreStubs(LOTTE_FLOW)) {
     console.error('좌석 확보 셀렉터가 아직 실측되지 않았습니다.');
     console.error('  npm run record  로 예매 흐름을 녹화해 src/hold/selectors.ts 를 채우세요.');
     console.error('  그 전까지는 watch.json 의 action 을 "notify" 로 두세요.');
@@ -69,13 +75,18 @@ async function main() {
   let held: Alert | null = null;
 
   const creds = credentialsFromEnv();
-  const holder = new LotteSeatHolder({
+  const lotteHolder = new LotteSeatHolder({
     ...(creds ? { credentials: creds } : {}),
     onLogin: (outcome) => {
       // 로그인이 실제로 일어난 것은 조용히 넘길 사건이 아니다.
       if (outcome === 'recovered') log('세션이 만료되어 자동으로 다시 로그인했습니다');
     },
   });
+  const holder = holdChains.has('cgv')
+    ? new CgvSeatHolder({
+        onPick: (seats) => log(`  고른 좌석 ${seats.map((s) => `${s.row}${s.col}`).join(', ')}`),
+      })
+    : lotteHolder;
 
   const holdManager =
     spec.action === 'hold'
@@ -142,9 +153,9 @@ async function main() {
       }
     }
 
-    if (!holdManager) return;
+    if (!holdManager || !holdChains.has('lotte')) return;
     try {
-      if ((await holder.checkSession()) === 'needs-human') {
+      if ((await lotteHolder.checkSession()) === 'needs-human') {
         log('⚠ 로그인이 풀렸습니다. 좌석 확보를 할 수 없습니다.');
         await tg.warn(
           '⚠️ <b>로그인이 풀렸습니다</b>\n\n좌석 확보를 할 수 없습니다.\n' +
@@ -185,10 +196,16 @@ async function main() {
       }
 
       // 확보하는 동안은 감시를 멈춘다. 동시에 여러 자리를 잡아두지 않는다.
-      if (holdManager && a.candidate) {
+      if (holdManager) {
         held = a;
         log('  좌석 확보 시도 — 결제 화면 직전에서 멈춥니다');
-        await holdManager.run({ showtime: a.showtime, seats: a.candidate.seats });
+        // 좌석맵을 미리 못 뜯는 체인(CGV)은 후보가 비어 온다.
+        // 그때는 홀더가 화면에 들어간 뒤 직접 고른다.
+        await holdManager.run({
+          showtime: a.showtime,
+          seats: a.candidate?.seats ?? [],
+          pick: { block: spec.block, party: spec.party },
+        });
         held = null;
       }
     }

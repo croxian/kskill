@@ -11,6 +11,7 @@
   "block": null,
   "party": { "mode": "single", "size": 1 },
   "action": "notify",
+  "_hold": "확보하려면 action 을 hold 로. CGV 는 로그인 세션이 살아 있어야 합니다.",
   "pollFloorSec": 45,
   "maxAlertsPerRun": 5,
   "expiresAt": "2026-08-16T23:59:00+09:00"

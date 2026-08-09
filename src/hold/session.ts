@@ -1,4 +1,6 @@
 import type { Seat, Showtime } from '../types.js';
+import type { SeatBlock } from '../core/block.js';
+import type { PartySpec } from '../core/runs.js';
 
 /**
  * 좌석 확보의 안전 규칙을 코드로 강제한다.
@@ -14,7 +16,16 @@ import type { Seat, Showtime } from '../types.js';
 
 export interface HoldRequest {
   showtime: Showtime;
+  /**
+   * 잡을 좌석. 비어 있으면 홀더가 직접 고른다.
+   *
+   * 롯데는 폴링 때 좌석맵을 미리 뜯어 후보를 정해 두지만, CGV 는 좌석맵을
+   * 브라우저에서만 읽을 수 있다. 그래서 CGV 홀더는 화면에 들어간 뒤에야
+   * 좌석을 알 수 있고, 그때 pick 조건으로 직접 고른다.
+   */
   seats: Seat[];
+  /** seats 가 비었을 때 홀더가 쓸 선택 조건. */
+  pick?: { block: SeatBlock | null; party: PartySpec };
 }
 
 /** 실제로 좌석을 잡는 주체. Playwright 구현과 테스트용 가짜가 이걸 만족한다. */
