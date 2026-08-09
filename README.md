@@ -40,8 +40,21 @@ npm run watch -- watch.json
 [19:10:50]   오디세이 19:10 9관 → J10, J11
 ```
 
-봇 토큰은 <b>@BotFather</b> 에서 `/newbot`. `chat_id` 는 봇에게 아무 메시지나 보낸 뒤
+봇 토큰은 **@BotFather** 에서 `/newbot`. `chat_id` 는 봇에게 아무 메시지나 보낸 뒤
 `https://api.telegram.org/bot$TG_TOKEN/getUpdates` 로 한 번만 확인하면 된다.
+
+### 좌석 확보를 쓰려면 (5단계)
+
+로그인 자동화는 하지 않는다. 아이디·비밀번호를 코드에 넣는 순간 캡차와
+이상 로그인 탐지에 걸린다. 대신 **내가 직접 로그인해 둔 브라우저 프로필**을 재사용한다.
+한 번만 하면 된다.
+
+```bash
+npm run browser     # chromium 내려받기
+npm run login       # 열린 창에서 직접 로그인한 뒤 닫는다
+```
+
+`.profile/` 에 세션이 남는다. `.gitignore` 에 들어 있으니 커밋되지 않는다.
 
 ## 구조
 

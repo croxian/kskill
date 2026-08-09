@@ -9,12 +9,17 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "fixture": "node scripts/make-fixture.mjs",
-    "watch": "tsx --env-file-if-exists=.env src/main.ts"
+    "watch": "tsx --env-file-if-exists=.env src/main.ts",
+    "browser": "playwright install chromium",
+    "login": "playwright open --user-data-dir=.profile https://www.lottecinema.co.kr"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
     "tsx": "^4.23.11",
     "typescript": "^5.6.3",
     "vitest": "^2.1.5"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
   }
 }
