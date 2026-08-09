@@ -28,6 +28,28 @@ export function sign(path: string, body: string, timestamp: string): string {
     .digest('base64');
 }
 
+/**
+ * 서명 + 브라우저처럼 보이는 헤더.
+ *
+ * daiso 의 직접 호출 경로는 서명 헤더 두 개만 보내고, 403 이 오면
+ * 유료 프록시(Zyte)로 넘긴다. 즉 저자들도 직접 호출이 막히는 걸 알고 있었다.
+ * 헤더를 더 붙여서 통과하는지 먼저 확인하고, 안 되면 브라우저로 간다.
+ */
+export function signedHeaders(path: string, timestamp: string): Record<string, string> {
+  return {
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'ko-KR,ko;q=0.9',
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+    Origin: 'https://www.cgv.co.kr',
+    Referer: 'https://www.cgv.co.kr/',
+    'X-TIMESTAMP': timestamp,
+    // 서명은 쿼리스트링이 아니라 경로만 포함한다. 본문은 GET 이라 빈 문자열.
+    'X-SIGNATURE': sign(path, '', timestamp),
+  };
+}
+
 export async function callCgv(
   path: string,
   params: Record<string, string>,
@@ -42,13 +64,7 @@ export async function callCgv(
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetchImpl(`${CGV.BASE_URL}${path}?${query}`, {
-      headers: {
-        Accept: 'application/json',
-        'Accept-Language': 'ko-KR',
-        'X-TIMESTAMP': timestamp,
-        // 서명은 쿼리스트링이 아니라 경로만 포함한다. 본문은 GET 이라 빈 문자열.
-        'X-SIGNATURE': sign(path, '', timestamp),
-      },
+      headers: signedHeaders(path, timestamp),
       signal: ac.signal,
     });
     if (!res.ok) throw new CgvApiError(`HTTP ${res.status}`, path, res.status);

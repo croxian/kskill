@@ -11,6 +11,7 @@
  */
 import { writeFileSync } from 'node:fs';
 
+import { CgvBrowserClient } from '../src/adapters/cgv/browser.js';
 import { fetchSiteTimetable } from '../src/adapters/cgv/client.js';
 import type { CgvScnItem } from '../src/adapters/cgv/api.js';
 
@@ -18,14 +19,38 @@ const args = parseArgs(process.argv.slice(2));
 const theaterCode = args.theater ?? '0013';
 const playDate = args.date ?? kstToday();
 
-const items = await fetchSiteTimetable({ theaterCode, playDate });
+/**
+ * 직접 호출을 먼저 시도하고, 막히면 브라우저로 넘어간다.
+ * 어느 쪽이 통하는지가 CGV 어댑터의 설계를 가른다.
+ */
+let items: CgvScnItem[] = [];
+let via = '직접 호출';
+const browser = new CgvBrowserClient({ headless: true });
+
+try {
+  items = await fetchSiteTimetable({ theaterCode, playDate });
+  console.log('직접 호출 성공 — 브라우저 없이 폴링할 수 있습니다.');
+} catch (e) {
+  console.log(`직접 호출 실패 (${e instanceof Error ? e.message : String(e)}) — 브라우저로 재시도합니다.`);
+  try {
+    items = await browser.siteTimetable(theaterCode, playDate);
+    via = '브라우저';
+    console.log('브라우저 경로 성공.');
+  } catch (e2) {
+    console.error(`브라우저도 실패: ${e2 instanceof Error ? e2.message : String(e2)}`);
+    console.error('npm run browser 로 chromium 을 설치했는지 확인하세요.');
+    await browser.close();
+    process.exit(1);
+  }
+}
+await browser.close();
 
 if (items.length === 0) {
   console.log('회차가 없습니다. 지점 코드와 날짜를 확인하세요.');
   process.exit(0);
 }
 
-console.log(`\n${theaterCode} · ${playDate} · ${items.length}개 회차\n`);
+console.log(`\n${theaterCode} · ${playDate} · ${items.length}개 회차 · 경로: ${via}\n`);
 
 // ── 1. 원본에 어떤 필드가 있는가 ──────────────────────────────
 const keys = [...new Set(items.flatMap((i) => Object.keys(i)))].sort();
