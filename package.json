@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "fixture": "node scripts/make-fixture.mjs",
     "watch": "tsx --env-file-if-exists=.env src/main.ts",
+    "probe": "tsx scripts/probe-hold.ts",
     "browser": "playwright install chromium",
     "login": "playwright open --user-data-dir=.profile https://www.lottecinema.co.kr"
   },
