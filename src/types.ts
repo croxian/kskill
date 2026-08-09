@@ -32,6 +32,15 @@ export interface Seat {
    */
   group: number;
   state: SeatState;
+  /**
+   * 체인 원본 상태 코드. 진단용으로 남긴다.
+   *
+   * blocked 안에는 성격이 다른 것들이 섞여 있다 — 장애인석처럼 영원히
+   * 안 열리는 자리와, 남이 지금 결제 화면에 붙잡고 있어서 곧 돌아올 수도
+   * 있는 자리가 같은 버킷에 들어간다. 판정에는 쓰지 않지만, 왜 못 잡는지
+   * 알아야 할 때가 있다.
+   */
+  rawStatus?: number;
   /** 요금/등급 블록. 롯데는 DisplayPhysicalBlockCode. */
   grade?: number;
   /** 체인이 "명당"으로 표시한 좌석. 점수 가점에 쓴다. */

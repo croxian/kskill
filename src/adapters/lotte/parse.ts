@@ -97,6 +97,7 @@ export function parseSeatMap(
       y: s.SeatYCoordinate ?? 0,
       group: Number(s.SeatColumGroupNo ?? 0),
       state: toState(s.SeatStatusCode),
+      rawStatus: s.SeatStatusCode,
       grade: s.DisplayPhysicalBlockCode,
       sweetSpot: s.SweetSpotYN === 'Y',
     }));
@@ -115,9 +116,14 @@ export function parseSeatMap(
 /**
  * SeatStatusCode 0 만 살 수 있다.
  *
- * 50 은 예매 완료, 그 밖의 값(실측에서 20/23/28/80)은 장애인석·거리두기 등
- * "비어 있지만 팔지 않는" 좌석이다. blocked 로 따로 두지 않고 free 에 섞으면
- * 잡을 수 없는 자리에 알림이 간다.
+ * 50 은 예매 완료, 그 밖의 값은 "비어 있지만 지금 살 수 없는" 좌석이다.
+ * 장애인석·거리두기처럼 영원히 안 열리는 것도 있고, 남이 결제 화면에서
+ * 붙잡고 있어 곧 돌아올 수도 있는 것도 있다 — 실측으로 확인했다.
+ * 브라우저에서 좌석 하나를 선택하고 결제 화면까지 가자, 밖에서 조회한
+ * 그 좌석이 20초 만에 free 에서 벗어났고 잔여수도 19 → 18 로 줄었다.
+ *
+ * 어느 쪽이든 지금 살 수 없으므로 blocked 로 묶는다. free 에 섞으면
+ * 남이 붙잡고 있는 자리에 알림이 간다. 원본 코드는 rawStatus 에 남긴다.
  */
 function toState(code: number | undefined): SeatState {
   if (code === SEAT_STATUS.FREE) return 'free';

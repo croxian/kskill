@@ -87,7 +87,9 @@ async function probe(): Promise<void> {
       const target = want
         ? map.seats.find((s) => `${s.row}${s.col}` === want || s.id.toUpperCase() === want)
         : undefined;
-      const status = target ? `${target.state}` : '-';
+      // 원본 코드까지 찍는다. blocked 안에서 "남이 잡고 있는 중" 과
+      // "장애인석" 을 가르는 건 이 숫자뿐이다.
+      const status = target ? `${target.state}(${target.rawStatus})` : '-';
 
       const changed = prev && (prev.status !== status || prev.free !== free);
       const mark = changed ? '  ← 변화' : '';
@@ -95,7 +97,7 @@ async function probe(): Promise<void> {
 
       console.log(
         `[${clock()}] +${String(elapsed).padStart(4)}s  ` +
-          (want ? `${want} ${status.padEnd(8)}` : '') +
+          (want ? `${want} ${status.padEnd(14)}` : '') +
           `잔여 ${String(free).padStart(3)}${mark}`,
       );
       prev = { status, free };

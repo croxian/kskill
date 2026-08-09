@@ -101,6 +101,21 @@ describe('parseSeatMap', () => {
   it('체인이 표시한 명당석을 읽는다', () => {
     expect(map.seats.some((s) => s.sweetSpot)).toBe(true);
   });
+
+  /**
+   * blocked 에는 성격이 다른 것들이 섞인다. 장애인석처럼 영원히 안 열리는
+   * 자리와, 남이 결제 화면에서 붙잡고 있어 곧 돌아올 자리가 같은 버킷이다.
+   * 판정에는 안 쓰지만 왜 못 잡는지 알려면 원본 코드가 필요하다.
+   */
+  it('원본 상태 코드를 진단용으로 남긴다', () => {
+    const sold = map.seats.find((s) => s.state === 'sold')!;
+    const blocked = map.seats.find((s) => s.state === 'blocked')!;
+    const free = map.seats.find((s) => s.state === 'free')!;
+
+    expect(sold.rawStatus).toBe(50);
+    expect(free.rawStatus).toBe(0);
+    expect([20, 23, 28, 80]).toContain(blocked.rawStatus);
+  });
 });
 
 describe('crossCheck', () => {
