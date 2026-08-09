@@ -110,10 +110,7 @@ export class Watcher {
 
     const live = collapseDivisions(all)
       .filter((s) => matchesSpec(s, spec))
-      .filter((s) => intervalMs(showtimeAt(s.playDate, s.startTime), now, {
-        floorSec: spec.pollFloorSec,
-        stopBeforeMin: spec.stopBeforeMin,
-      }) !== STOP);
+      .filter((s) => intervalMs(showtimeAt(s.playDate, s.startTime), now, this.timing(s)) !== STOP);
 
     // 첫 관측이면 현재 상태를 한 번 보여주고, 이후로는 늘어난 것만 본다.
     // 지난 폴링에서 상한에 잘린 회차는 변화와 무관하게 다시 끼워 넣는다.
@@ -207,9 +204,27 @@ export class Watcher {
     if (this.expired) return STOP;
     if (offline) return Math.max(this.spec.pollFloorSec, 60) * 1000;
     return nextWakeMs(
-      live.map((s) => showtimeAt(s.playDate, s.startTime)),
+      live.map((s) => ({
+        showAt: showtimeAt(s.playDate, s.startTime),
+        ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
+      })),
       now,
       { floorSec: this.spec.pollFloorSec, stopBeforeMin: this.spec.stopBeforeMin },
     );
+  }
+
+  /**
+   * 언제까지 볼 것인가.
+   *
+   * 체인이 판매 종료 시각을 주면 그걸 쓴다. CGV 는 상영 시작 뒤에도
+   * 15분 더 파는데, "30분 전 중단" 으로 잡으면 취소표가 가장 많이 나오는
+   * 45분을 통째로 버린다.
+   */
+  private timing(s: Showtime) {
+    return {
+      floorSec: this.spec.pollFloorSec,
+      stopBeforeMin: this.spec.stopBeforeMin,
+      ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
+    };
   }
 }

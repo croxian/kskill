@@ -13,7 +13,12 @@ export const STOP = 0;
 
 export interface IntervalOpts {
   floorSec?: number;
-  /** 상영 이만큼 안쪽이면 감시 종료. 현장 발권이 더 빠르다. */
+  /**
+   * 판매가 실제로 끝나는 시각. 체인이 알려주면 이걸 쓴다.
+   * stopBeforeMin 보다 우선한다 — 어림짐작보다 실제 값이 낫다.
+   */
+  stopAt?: Date;
+  /** stopAt 이 없을 때만. 상영 이만큼 안쪽이면 감시 종료. */
   stopBeforeMin?: number;
   /** 정각 동시요청을 흩기 위한 흔들림 비율. 테스트에서는 0 으로 준다. */
   jitter?: number;
@@ -30,10 +35,14 @@ export interface IntervalOpts {
  *   30분 미만  중단
  */
 export function intervalMs(showAt: Date, now: number, opts: IntervalOpts = {}): number {
-  const { floorSec = 30, stopBeforeMin = 30, jitter = 0.25, random = Math.random } = opts;
+  const { floorSec = 30, stopAt, stopBeforeMin = 30, jitter = 0.25, random = Math.random } = opts;
 
   const minsLeft = (showAt.getTime() - now) / 60_000;
-  if (minsLeft <= stopBeforeMin) return STOP;
+  if (stopAt) {
+    if (now >= stopAt.getTime()) return STOP;
+  } else if (minsLeft <= stopBeforeMin) {
+    return STOP;
+  }
 
   const hoursLeft = minsLeft / 60;
   const base =
@@ -47,9 +56,17 @@ export function intervalMs(showAt: Date, now: number, opts: IntervalOpts = {}): 
  * 여러 회차를 한 루프로 감시할 때의 다음 깨어날 시각.
  * 가장 급한 회차에 맞추되, 살아 있는 회차가 없으면 STOP.
  */
-export function nextWakeMs(showAts: Date[], now: number, opts: IntervalOpts = {}): number {
-  const alive = showAts
-    .map((at) => intervalMs(at, now, opts))
+export function nextWakeMs(
+  entries: Array<Date | { showAt: Date; stopAt?: Date }>,
+  now: number,
+  opts: IntervalOpts = {},
+): number {
+  const alive = entries
+    .map((e) =>
+      e instanceof Date
+        ? intervalMs(e, now, opts)
+        : intervalMs(e.showAt, now, { ...opts, ...(e.stopAt ? { stopAt: e.stopAt } : {}) }),
+    )
     .filter((ms) => ms !== STOP);
   return alive.length === 0 ? STOP : Math.min(...alive);
 }

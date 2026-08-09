@@ -79,6 +79,14 @@ export interface Showtime {
   totalSeats: number;
   /** 남은 좌석 수. 어댑터가 체인별 함정을 흡수한 뒤의 값이다. */
   remainingSeats: number;
+  /**
+   * 판매 종료 시각 'HH:mm'. 체인이 알려주면 그대로, 없으면 undefined.
+   *
+   * CGV 는 상영 시작 **뒤에도** 판다 (실측: 18:00 회차의 판매마감 18:15).
+   * 이걸 모르면 "상영 30분 전 중단" 같은 어림짐작을 쓰게 되는데, 그러면
+   * 취소표가 가장 많이 나오는 45분을 통째로 버린다.
+   */
+  salesEndAt?: string;
 }
 
 export function showtimeKey(s: Showtime): string {

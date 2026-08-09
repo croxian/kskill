@@ -52,3 +52,39 @@ describe('nextWakeMs', () => {
     expect(nextWakeMs([], NOW, fixed)).toBe(STOP);
   });
 });
+
+describe('판매 종료 시각', () => {
+  /**
+   * CGV 는 상영 시작 뒤에도 15분 더 판다 (실측: 18:00 회차의 판매마감 18:15).
+   * "30분 전 중단" 으로 잡으면 취소표가 가장 많이 나오는 45분을 통째로 버린다.
+   */
+  it('stopAt 이 있으면 상영 시작 뒤에도 계속 본다', () => {
+    const showAt = at(-5); // 이미 5분 전에 시작했다
+    const stopAt = at(10); // 판매는 10분 뒤에 끝난다
+
+    expect(intervalMs(showAt, NOW, { ...fixed, stopAt })).toBeGreaterThan(0);
+    expect(intervalMs(showAt, NOW, fixed)).toBe(STOP); // stopAt 이 없으면 진작 접었다
+  });
+
+  it('판매가 끝나면 그때 접는다', () => {
+    expect(intervalMs(at(-5), NOW, { ...fixed, stopAt: at(-1) })).toBe(STOP);
+  });
+
+  it('stopAt 이 stopBeforeMin 을 이긴다', () => {
+    // 20분 뒤 상영이라 stopBeforeMin(30) 기준으로는 접어야 하지만,
+    // 판매는 35분 뒤까지 이어진다
+    expect(intervalMs(at(20), NOW, { ...fixed, stopAt: at(35), stopBeforeMin: 30 })).toBe(45_000);
+  });
+
+  it('회차마다 다른 stopAt 을 각각 적용한다', () => {
+    const ms = nextWakeMs(
+      [
+        { showAt: at(-5), stopAt: at(10) }, // 아직 판매 중
+        { showAt: at(10 * 60) }, // 10시간 뒤
+      ],
+      NOW,
+      fixed,
+    );
+    expect(ms).toBe(45_000); // 임박한 쪽에 맞춘다
+  });
+});

@@ -38,6 +38,7 @@ export function parseCgvTimetable(items: CgvScnItem[]): Showtime[] {
       // 달리 뒤집혀 있지 않다. 금요일 프라임타임 IMAX(18:00)가 0 인 게 근거다 —
       // "예매된 수 0" 이면 한 장도 안 팔렸다는 뜻이 되는데 말이 안 된다.
       remainingSeats: num(i.frSeatCnt ?? i.frtmpSeatCnt),
+      ...(i.salEndTm ? { salesEndAt: formatTime(i.salEndTm) } : {}),
     }));
 }
 
