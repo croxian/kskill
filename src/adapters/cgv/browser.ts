@@ -1,6 +1,7 @@
 import type { BrowserContext, Page } from 'playwright';
 
 import { CGV, type CgvScnItem } from './api.js';
+import { CgvBlockedError, isBlockMessage } from './blocked.js';
 import { signedHeaders } from './client.js';
 import { CGV_WEB } from './web-api.js';
 import type { CgvSeatDataResponse } from './web-parse.js';
@@ -71,9 +72,13 @@ export class CgvBrowserClient {
     const url = `${CGV.BASE_URL}${path}?${new URLSearchParams(params).toString()}`;
     const res = await page.goto(url, { waitUntil: 'domcontentloaded' });
     if (!res) throw new Error(`CGV 응답 없음: ${path}`);
-    if (!res.ok()) throw new Error(`CGV HTTP ${res.status()}: ${path}`);
 
     const text = await res.text();
+    if (!res.ok()) {
+      const detail = readable(text);
+      if (isBlockMessage(detail) || isBlockMessage(text)) throw new CgvBlockedError(detail);
+      throw new Error(`CGV HTTP ${res.status()}: ${path}\n  ${detail}`);
+    }
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -115,7 +120,10 @@ export class CgvBrowserClient {
     );
 
     if (res.status < 200 || res.status >= 300) {
-      throw new Error(`CGV HTTP ${res.status}: ${path}\n  ${readable(res.text)}`);
+      const detail = readable(res.text);
+      // 차단은 재시도로 풀리지 않는다. 다른 실패와 구분해서 던진다.
+      if (isBlockMessage(detail) || isBlockMessage(res.text)) throw new CgvBlockedError(detail);
+      throw new Error(`CGV HTTP ${res.status}: ${path}\n  ${detail}`);
     }
     try {
       return JSON.parse(res.text) as unknown;

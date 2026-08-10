@@ -28,6 +28,11 @@ export function createAdapter(theaters: TheaterRef[]) {
   return {
     canFetchSeatMap,
 
+    /** CGV 가 접근을 제한했는가. 그러면 감시를 이어갈 이유가 없다. */
+    get cgvBlocked() {
+      return cgv.blocked;
+    },
+
     async listShowtimes(theaterIdx: number, playDate: string): Promise<Showtime[]> {
       switch (chainOf(theaterIdx)) {
         case 'lotte':

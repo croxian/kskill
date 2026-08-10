@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { createAdapter } from './adapters/index.js';
+import { CGV_BLOCKED_WARNING } from './adapters/cgv/blocked.js';
 import { crossCheck } from './adapters/lotte/parse.js';
 import { STOP } from './core/poll.js';
 import { normalizeSpec, type WatchSpec } from './core/spec.js';
@@ -193,6 +194,15 @@ async function main() {
   for (;;) {
     await ensureSession();
     const res = await watcher.runOnce();
+
+    // 차단은 기다린다고 풀리는 실패가 아니다. 계속 두드리면 제한만 길어진다.
+    const cgvBlocked = source.cgvBlocked;
+    if (cgvBlocked) {
+      log(`🚫 ${cgvBlocked.message}`);
+      await tg.warn(CGV_BLOCKED_WARNING);
+      log('CGV 감시를 종료합니다. 우회하지 않습니다.');
+      return;
+    }
 
     if (res.offline) {
       log(`조회가 전부 실패했습니다. ${Math.round(res.nextWakeMs / 1000)}초 뒤 재시도합니다.`);

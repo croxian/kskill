@@ -1,5 +1,6 @@
 import type { Showtime } from '../../types.js';
 import type { TheaterRef } from '../../core/spec.js';
+import { CgvBlockedError, isBlockMessage } from './blocked.js';
 import { CgvBrowserClient } from './browser.js';
 import { fetchSiteTimetable } from './client.js';
 import { parseCgvTimetable } from './parse.js';
@@ -30,14 +31,29 @@ export function createCgvAdapter(theaters: TheaterRef[], opts: CgvAdapterOpts = 
       headless: true,
     });
   let useBrowser = opts.forceBrowser ?? false;
+  /**
+   * 차단당하면 더 두드리지 않는다.
+   *
+   * 감시 루프는 조회 실패를 네트워크 문제로 보고 60초 뒤에 또 시도한다.
+   * 차단은 그렇게 풀리지 않고, 막힌 상태에서 계속 두드리면 제한만 길어진다.
+   * 한 번 막히면 요청 자체를 만들지 않고 같은 사실을 계속 알린다.
+   */
+  let blocked: CgvBlockedError | null = null;
 
   return {
+    /** 차단당했는가. main.ts 가 이걸 보고 감시를 멈춘다. */
+    get blocked(): CgvBlockedError | null {
+      return blocked;
+    },
+
     /** 지금 어느 경로를 쓰고 있는지. 로그에 찍어두면 진단이 쉽다. */
     get transport(): 'direct' | 'browser' {
       return useBrowser ? 'browser' : 'direct';
     },
 
     async listShowtimes(theaterIdx: number, playDate: string): Promise<Showtime[]> {
+      if (blocked) throw blocked;
+
       const t = theaters[theaterIdx];
       if (!t) throw new Error(`알 수 없는 지점 인덱스: ${theaterIdx}`);
 
@@ -50,12 +66,18 @@ export function createCgvAdapter(theaters: TheaterRef[], opts: CgvAdapterOpts = 
           });
           return parseCgvTimetable(items);
         } catch (err) {
-          // 403 은 우리가 고칠 수 있는 게 아니다. 한 번 겪으면 바로 갈아탄다.
-          if (!isBlocked(err)) throw err;
+          if (asBlock(err)) throw (blocked = asBlock(err)!);
+          // 그냥 403 은 우리가 고칠 수 있는 게 아니다. 한 번 겪으면 바로 갈아탄다.
+          if (!isRefused(err)) throw err;
           useBrowser = true;
         }
       }
-      return parseCgvTimetable(await browser.siteTimetable(t.theaterId, playDate));
+      try {
+        return parseCgvTimetable(await browser.siteTimetable(t.theaterId, playDate));
+      } catch (err) {
+        if (asBlock(err)) throw (blocked = asBlock(err)!);
+        throw err;
+      }
     },
 
     async close(): Promise<void> {
@@ -64,6 +86,19 @@ export function createCgvAdapter(theaters: TheaterRef[], opts: CgvAdapterOpts = 
   };
 }
 
-function isBlocked(err: unknown): boolean {
+/** 그냥 거절인가 (재시도·경로 전환의 여지가 있다). */
+function isRefused(err: unknown): boolean {
   return err instanceof Error && /HTTP 40[ervy3]|403/.test(err.message);
+}
+
+/**
+ * "이용이 제한되었어요" 인가.
+ *
+ * 브라우저 경로는 CgvBlockedError 를 그대로 던지지만, 직접 호출 경로는
+ * 본문을 메시지에 담아 평범한 Error 로 온다. 둘 다 잡는다.
+ */
+function asBlock(err: unknown): CgvBlockedError | null {
+  if (err instanceof CgvBlockedError) return err;
+  if (err instanceof Error && isBlockMessage(err.message)) return new CgvBlockedError(err.message);
+  return null;
 }
