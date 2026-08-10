@@ -67,6 +67,16 @@ export interface WatchSpec {
   expiresAt: string;
   /** 상영 시각이 이만큼 안쪽이면 감시를 접는다. 현장 발권이 더 빠르다. */
   stopBeforeMin?: number;
+  /**
+   * 아무리 멀어도 이 간격보다는 자주 본다(초).
+   *
+   * 기본 간격표는 남은 시간이 많으면 느긋하게 본다 — 한산한 회차에서는
+   * 난 자리가 한동안 남아 있기 때문이다. 매진된 특별관은 다르다.
+   * 사흘 전에 나도 몇 초면 사라진다. 그런 회차를 볼 때 켠다.
+   *
+   * 켜면 요청이 그만큼 늘어난다. 감시 대상을 좁혀서 상쇄하는 게 좋다.
+   */
+  maxIntervalSec?: number;
 }
 
 export const POLL_FLOOR_SEC = 30;
@@ -77,6 +87,9 @@ export function normalizeSpec(spec: WatchSpec): WatchSpec {
     ...spec,
     pollFloorSec: Math.max(POLL_FLOOR_SEC, spec.pollFloorSec || POLL_FLOOR_SEC),
     stopBeforeMin: spec.stopBeforeMin ?? 30,
+    ...(spec.maxIntervalSec
+      ? { maxIntervalSec: Math.max(POLL_FLOOR_SEC, spec.maxIntervalSec) }
+      : {}),
     maxAlertsPerRun: Math.max(1, spec.maxAlertsPerRun ?? 5),
     party:
       spec.party.mode === 'single'

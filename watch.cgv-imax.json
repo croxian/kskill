@@ -1,18 +1,35 @@
 {
   "id": "cgv-imax-odyssey",
   "theaters": [
-    { "chain": "cgv", "theaterId": "0013", "label": "용산아이파크몰" },
-    { "chain": "cgv", "theaterId": "0059", "label": "영등포타임스퀘어" }
+    {
+      "chain": "cgv",
+      "theaterId": "0013",
+      "label": "용산아이파크몰"
+    },
+    {
+      "chain": "cgv",
+      "theaterId": "0059",
+      "label": "영등포타임스퀘어"
+    }
   ],
-  "movies": ["30001323"],
-  "dates": ["20260812", "20260813", "20260814", "20260815", "20260816"],
+  "movies": [
+    "30001323"
+  ],
+  "dates": [
+    "20260814"
+  ],
   "windows": [],
   "screenPattern": "IMAX",
   "block": null,
-  "party": { "mode": "single", "size": 1 },
+  "party": {
+    "mode": "single",
+    "size": 1
+  },
   "action": "notify",
-  "_hold": "확보하려면 action 을 hold 로. CGV 는 로그인 세션이 살아 있어야 합니다.",
+  "_주의": "CGV 는 2026-08-10 에 자동 접근으로 차단된 적이 있습니다. 로그의 '요청' 숫자를 보면서 쓰세요.",
   "pollFloorSec": 45,
+  "maxIntervalSec": 60,
+  "_maxIntervalSec": "매진 특별관은 사흘 전에 난 자리도 즉시 사라집니다. 남은 시간과 무관하게 60초마다 봅니다.",
   "maxAlertsPerRun": 5,
-  "expiresAt": "2026-08-16T23:59:00+09:00"
+  "expiresAt": "2026-08-14T23:59:00+09:00"
 }

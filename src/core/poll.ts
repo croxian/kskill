@@ -20,6 +20,17 @@ export interface IntervalOpts {
   stopAt?: Date;
   /** stopAt 이 없을 때만. 상영 이만큼 안쪽이면 감시 종료. */
   stopBeforeMin?: number;
+  /**
+   * 아무리 멀어도 이보다는 자주 본다.
+   *
+   * 아래 표는 "난 자리가 얼마나 오래 남아 있는가" 를 기준으로 짠 것이다.
+   * 한산한 회차라면 사흘 전에 난 자리는 몇 시간 남아 있으니 30분에 한 번도
+   * 늦지 않다. 그런데 매진된 특별관은 사흘 전이든 세 시간 전이든 나오는
+   * 즉시 사라진다. 그런 회차에서는 이 전제가 통째로 무너진다.
+   *
+   * 그래서 상한을 둔다. 경쟁이 심한 회차를 볼 때 켠다.
+   */
+  maxSec?: number;
   /** 정각 동시요청을 흩기 위한 흔들림 비율. 테스트에서는 0 으로 준다. */
   jitter?: number;
   random?: () => number;
@@ -33,9 +44,19 @@ export interface IntervalOpts {
  *   3~24시간    3분   취소 밀도가 가장 높은 구간
  *   30분~3시간 45초   노쇼 취소와 결제 실패 좌석이 풀린다
  *   30분 미만  중단
+ *
+ * maxSec 을 주면 위 표에 상한을 씌운다. 매진된 특별관처럼 난 자리가
+ * 즉시 사라지는 회차에서는 남은 시간과 무관하게 자주 봐야 한다.
  */
 export function intervalMs(showAt: Date, now: number, opts: IntervalOpts = {}): number {
-  const { floorSec = 30, stopAt, stopBeforeMin = 30, jitter = 0.25, random = Math.random } = opts;
+  const {
+    floorSec = 30,
+    stopAt,
+    stopBeforeMin = 30,
+    maxSec,
+    jitter = 0.25,
+    random = Math.random,
+  } = opts;
 
   const minsLeft = (showAt.getTime() - now) / 60_000;
   if (stopAt) {
@@ -48,7 +69,9 @@ export function intervalMs(showAt: Date, now: number, opts: IntervalOpts = {}): 
   const base =
     hoursLeft > 72 ? 1800 : hoursLeft > 24 ? 600 : hoursLeft > 3 ? 180 : 45;
 
-  const sec = Math.max(base, floorSec);
+  // 상한이 하한보다 짧아도 하한은 깨지 않는다. 그쪽이 규약이다.
+  const capped = maxSec ? Math.min(base, maxSec) : base;
+  const sec = Math.max(capped, floorSec);
   return Math.round((sec + random() * sec * jitter) * 1000);
 }
 

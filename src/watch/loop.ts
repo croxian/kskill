@@ -246,7 +246,11 @@ export class Watcher {
         ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
       })),
       now,
-      { floorSec: this.spec.pollFloorSec, stopBeforeMin: this.spec.stopBeforeMin },
+      {
+        floorSec: this.spec.pollFloorSec,
+        stopBeforeMin: this.spec.stopBeforeMin,
+        ...(this.spec.maxIntervalSec ? { maxSec: this.spec.maxIntervalSec } : {}),
+      },
     );
   }
 
@@ -284,6 +288,7 @@ export class Watcher {
     return {
       floorSec: this.spec.pollFloorSec,
       stopBeforeMin: this.spec.stopBeforeMin,
+      ...(this.spec.maxIntervalSec ? { maxSec: this.spec.maxIntervalSec } : {}),
       ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
     };
   }

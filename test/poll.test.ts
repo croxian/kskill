@@ -88,3 +88,34 @@ describe('판매 종료 시각', () => {
     expect(ms).toBe(45_000); // 임박한 쪽에 맞춘다
   });
 });
+
+/**
+ * 기본 간격표는 "난 자리가 얼마나 오래 남아 있는가" 를 기준으로 짠 것이다.
+ * 한산한 회차라면 사흘 전에 난 자리는 몇 시간 남아 있다. 매진된 특별관은
+ * 사흘 전이든 세 시간 전이든 나오는 즉시 사라진다 — 거기서는 전제가 무너진다.
+ */
+describe('intervalMs — 상한', () => {
+  const NOW = Date.parse('2026-08-10T00:00:00Z');
+  const daysOut = (n: number) => new Date(NOW + n * 86_400_000);
+  const plain = { jitter: 0, random: () => 0 };
+
+  it('상한이 없으면 멀수록 느긋하다', () => {
+    expect(intervalMs(daysOut(5), NOW, plain)).toBe(1800_000);
+  });
+
+  it('상한을 주면 아무리 멀어도 그보다는 자주 본다', () => {
+    expect(intervalMs(daysOut(5), NOW, { ...plain, maxSec: 60 })).toBe(60_000);
+    expect(intervalMs(daysOut(2), NOW, { ...plain, maxSec: 60 })).toBe(60_000);
+  });
+
+  it('이미 상한보다 촘촘한 구간은 건드리지 않는다', () => {
+    // 2시간 뒤면 원래 45초다. 상한 60초가 이를 늦추면 안 된다.
+    const soon = new Date(NOW + 2 * 3_600_000);
+    expect(intervalMs(soon, NOW, { ...plain, maxSec: 60 })).toBe(45_000);
+  });
+
+  /** 하한 30초는 어떤 경우에도 깨지 않는다. 상한이 더 짧아도 마찬가지다. */
+  it('상한이 하한보다 짧아도 하한을 지킨다', () => {
+    expect(intervalMs(daysOut(5), NOW, { ...plain, maxSec: 5, floorSec: 30 })).toBe(30_000);
+  });
+});
