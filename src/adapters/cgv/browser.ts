@@ -20,6 +20,8 @@ import type { CgvSeatDataResponse } from './web-parse.js';
 
 export class CgvBrowserClient {
   private ctx: BrowserContext | null = null;
+  /** undefined = 아직 안 찾아봄, null = 찾아봤는데 없음 */
+  private custNo: string | null | undefined = undefined;
 
   constructor(
     private readonly opts: {
@@ -97,13 +99,20 @@ export class CgvBrowserClient {
     const page = await this.onSite();
     const url = `${CGV_WEB.PATH_PREFIX}${path}?${new URLSearchParams(params).toString()}`;
 
-    const res = await page.evaluate(async (u: string) => {
-      const r = await fetch(u, {
-        credentials: 'include',
-        headers: { accept: 'application/json, text/plain, */*' },
-      });
-      return { status: r.status, text: await r.text() };
-    }, url);
+    // referer 는 페이지 주소에서 자동으로 정해지는데, 우리 페이지는 홈이다.
+    // 같은 출처라 fetch 에 직접 지정할 수 있다 — 페이지를 예매 화면까지
+    // 몰고 갈 필요가 없다. accept 도 실측 그대로 맞춘다.
+    const res = await page.evaluate(
+      async (a: { u: string; ref: string }) => {
+        const r = await fetch(a.u, {
+          credentials: 'include',
+          referrer: a.ref,
+          headers: { accept: 'application/json' },
+        });
+        return { status: r.status, text: await r.text() };
+      },
+      { u: url, ref: CGV_WEB.BOOKING_REFERER },
+    );
 
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`CGV HTTP ${res.status}: ${path}\n  ${readable(res.text)}`);
@@ -130,6 +139,36 @@ export class CgvBrowserClient {
       await page.goto(CGV_WEB.SITE_URL, { waitUntil: 'domcontentloaded' });
     }
     return page;
+  }
+
+  /**
+   * 로그인한 계정의 custNo 를 브라우저에서 찾아본다.
+   *
+   * 좌석 호출에 이 값이 붙어 있었다. 사람이 손으로 넣게 하면 감시기를
+   * 무인으로 돌릴 수 없고, 설정 파일에 적어두면 계정 식별자가 파일에 남는다.
+   * 로그인된 세션 안에 이미 있는 값이니 거기서 읽는다.
+   *
+   * 못 찾으면 null. 좌석 호출이 custNo 없이도 되면 그만이다.
+   */
+  async findCustNo(): Promise<string | null> {
+    if (this.custNo !== undefined) return this.custNo;
+    const page = await this.onSite();
+    this.custNo = await page.evaluate(() => {
+      const RE = /"custNo"\s*:\s*"?(\d{6,})"?/;
+      for (const store of [localStorage, sessionStorage]) {
+        for (let i = 0; i < store.length; i++) {
+          const k = store.key(i);
+          if (!k) continue;
+          const v = store.getItem(k) ?? '';
+          if (/custno/i.test(k) && /^\d{6,}$/.test(v.trim())) return v.trim();
+          const m = RE.exec(v);
+          if (m) return m[1] ?? null;
+        }
+      }
+      const c = RE.exec(decodeURIComponent(document.cookie));
+      return c ? (c[1] ?? null) : null;
+    });
+    return this.custNo;
   }
 
   /** 한 회차의 좌석맵. custNo 는 계정 식별자라 넣지 않아도 되는지 실측으로 확인한다. */

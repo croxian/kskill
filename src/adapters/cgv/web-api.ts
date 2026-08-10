@@ -17,6 +17,14 @@ export const CGV_WEB = {
   SITE_URL: 'https://cgv.co.kr',
   /** 페이지 안에서 쓸 상대 경로 접두어. */
   PATH_PREFIX: '/api/v1',
+  /**
+   * 좌석 호출에 붙는 referer.
+   *
+   * 실측한 진짜 요청의 헤더는 셋뿐이었다 — referer, user-agent, accept.
+   * 그중 referer 가 예매 화면이었고, 홈페이지에서 부르면 403 이다.
+   * 엣지가 이 값을 본다.
+   */
+  BOOKING_REFERER: 'https://cgv.co.kr/cnm/selectVisitorCnt',
   COMPANY_CODE: 'A420',
 
   /**

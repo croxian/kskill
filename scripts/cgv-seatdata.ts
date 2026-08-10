@@ -44,10 +44,14 @@ async function main() {
 
   const browser = new CgvBrowserClient({ headless: !args.show });
   try {
-    // custNo 없이 먼저. 되면 계정 식별자를 안 들고 다녀도 된다.
-    for (const custNo of [undefined, args.cust]) {
-      if (custNo === undefined && args.cust) console.log('── custNo 없이 ──');
-      else if (custNo) console.log('\n── custNo 를 넣고 ──');
+    // 손으로 넣지 않아도 되도록 로그인된 세션에서 찾아본다.
+    const found = args.cust ?? (await browser.findCustNo());
+    console.log(found ? `custNo 를 세션에서 찾았습니다 (${mask(found)})\n` : 'custNo 를 못 찾았습니다\n');
+
+    // custNo 없이 먼저. 되면 계정 식별자를 아예 안 들고 다녀도 된다.
+    for (const custNo of [undefined, found ?? undefined]) {
+      if (custNo === undefined) console.log('── custNo 없이 ──');
+      else console.log('\n── custNo 를 넣고 ──');
 
       let res;
       try {
@@ -92,11 +96,17 @@ async function main() {
       }
 
       if (args.map && map.seats.length > 0) console.log(`\n${renderSeatMapText(map)}`);
-      if (!args.cust) break;
+      // 첫 시도가 통했으면 두 번째는 볼 이유가 없다.
+      if (ok) break;
     }
   } finally {
     await browser.close();
   }
+}
+
+/** 계정 식별자는 화면에 통째로 찍지 않는다. 찾았다는 것만 보이면 된다. */
+function mask(s: string): string {
+  return s.length <= 4 ? '****' : `${s.slice(0, 3)}…${s.slice(-2)}`;
 }
 
 /** 어긋났을 때 무엇을 잘못 읽었는지 알아야 한다. */
