@@ -86,13 +86,29 @@ export interface AlertBody {
   seatMap: SeatMap | null;
   mode: 'single' | 'adjacent';
   action: 'notify' | 'hold';
+  /**
+   * 설정에 좌석 조건이 있었는데 이 알림에는 적용되지 않았는가.
+   *
+   * 좌석맵을 못 구하는 체인에서 블록을 지정하면 그 조건은 그냥 무시된다.
+   * 그런데 알림 생김새는 조건을 통과한 것과 똑같아서, 받는 사람은 자기가
+   * 지정한 블록에 자리가 난 줄 안다. 실제로 그렇게 오해가 났다.
+   * 조건이 안 걸렸다는 사실은 알림 안에 있어야 한다 — 시작 로그가 아니라.
+   */
+  unfiltered?: 'block' | 'party' | 'both';
+}
+
+/** 무엇이 적용되지 않았는지 한 줄로. */
+export function unfilteredNote(what: NonNullable<AlertBody['unfiltered']>): string {
+  const label =
+    what === 'both' ? '좌석 블록과 연석 조건' : what === 'block' ? '좌석 블록' : '연석 조건';
+  return `⚠️ <b>${label}이 적용되지 않았습니다.</b> 이 회차에 자리가 났다는 것까지만 확인된 것이라, 지정한 자리가 났다는 뜻은 아닙니다.`;
 }
 
 /**
  * 좌석맵 없이 회차만 알린다.
  *
  * 좌석 단위 판정을 못 해도 "이 회차에 자리가 났다" 는 알려줄 수 있다.
- * 알림이 늦는 것보다 좌석을 모르는 편이 낫다.
+ * 알림이 늦는 것보다 좌석을 모르는 편이 낫다 — 다만 무엇을 모르는지는 말해야 한다.
  */
 export function renderCountAlert(a: AlertBody): string {
   return [
@@ -104,7 +120,7 @@ export function renderCountAlert(a: AlertBody): string {
     ``,
     `잔여 <b>${a.showtime.remainingSeats}석</b> / ${a.showtime.totalSeats}`,
     ``,
-    `<i>좌석은 직접 고르셔야 합니다.</i>`,
+    a.unfiltered ? unfilteredNote(a.unfiltered) : `<i>좌석은 직접 고르셔야 합니다.</i>`,
   ].join('\n');
 }
 

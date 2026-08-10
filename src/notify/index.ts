@@ -82,13 +82,29 @@ function alertKey(alert: Alert): string {
 }
 
 function toBody(alert: Alert): AlertBody {
+  const unfiltered = alert.candidate ? undefined : unappliedConditions(alert);
   return {
     showtime: alert.showtime,
     seats: alert.candidate?.seats ?? [],
     seatMap: alert.seatMap,
     mode: alert.spec.party.mode,
     action: alert.spec.action,
+    ...(unfiltered ? { unfiltered } : {}),
   };
+}
+
+/**
+ * 후보 좌석 없이 나가는 알림에서, 설정에 있었지만 걸리지 않은 조건.
+ *
+ * 설정에 아무 조건도 없었다면 알릴 것도 없다 — 잔여수 알림이 곧 원한 것이다.
+ */
+function unappliedConditions(alert: Alert): AlertBody['unfiltered'] {
+  const block = alert.spec.block !== null;
+  const party = alert.spec.party.mode === 'adjacent' && alert.spec.party.size > 1;
+  if (block && party) return 'both';
+  if (block) return 'block';
+  if (party) return 'party';
+  return undefined;
 }
 
 function buttons(alert: Alert, template?: string): InlineButton[][] {

@@ -168,6 +168,38 @@ describe('renderAlert', () => {
   });
 });
 
+/**
+ * 좌석맵을 못 구하는 체인(CGV)에서는 블록·연석 조건이 그냥 무시된다.
+ * 그런데 알림 모양은 조건을 통과한 것과 똑같아서, 받는 사람은 자기가 지정한
+ * 블록에 자리가 난 줄 안다. 실제로 그 오해가 났다.
+ */
+describe('renderCountAlert', () => {
+  const base = {
+    showtime: SHOWTIME,
+    seats: [],
+    seatMap: null,
+    mode: 'single' as const,
+    action: 'notify' as const,
+  };
+
+  it('조건이 안 걸렸으면 알림 안에서 말한다', () => {
+    const text = renderAlert({ ...base, unfiltered: 'block' });
+    expect(text).toContain('좌석 블록이 적용되지 않았습니다');
+    expect(text).toContain('잔여 <b>6석</b>');
+  });
+
+  it('블록과 연석이 둘 다 무시됐으면 둘 다 말한다', () => {
+    expect(renderAlert({ ...base, unfiltered: 'both' })).toContain('좌석 블록과 연석 조건');
+  });
+
+  /** 조건을 아무것도 안 걸었으면 경고할 것도 없다. 알림마다 겁줄 이유가 없다. */
+  it('조건이 없었으면 경고하지 않는다', () => {
+    const text = renderAlert(base);
+    expect(text).not.toContain('적용되지 않았습니다');
+    expect(text).toContain('좌석은 직접 고르셔야 합니다');
+  });
+});
+
 describe('renderHeld', () => {
   const body = {
     showtime: SHOWTIME,

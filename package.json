@@ -17,7 +17,8 @@
     "login": "playwright open --user-data-dir=.profile https://www.lottecinema.co.kr",
     "login:cgv": "playwright open --user-data-dir=.profile https://www.cgv.co.kr",
     "record": "playwright codegen --user-data-dir=.profile https://www.lottecinema.co.kr",
-    "record:cgv": "playwright codegen --user-data-dir=.profile https://www.cgv.co.kr"
+    "record:cgv": "playwright codegen --user-data-dir=.profile https://www.cgv.co.kr",
+    "explore": "tsx scripts/cgv-explore.ts"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

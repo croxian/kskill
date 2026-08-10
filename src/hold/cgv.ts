@@ -2,12 +2,18 @@ import type { BrowserContext, Page } from 'playwright';
 
 import { findCandidates } from '../core/runs.js';
 import type { Seat, Showtime } from '../types.js';
+import { CGV_FLOW, type CgvFlow } from './cgv-flow.js';
 import {
-  CGV_FLOW,
-  cgvScreenPattern,
-  cgvShowtimePattern,
-  type CgvFlow,
-} from './cgv-flow.js';
+  audienceAttempts,
+  dateAttempts,
+  dayPattern,
+  movieAttempts,
+  nameAttempts,
+  showtimeAttempts,
+  theaterAttempts,
+  ticketingAttempts,
+} from './cgv-steps.js';
+import { clickFirst, type Attempt } from './resolve.js';
 import { CGV_SEAT_RULES, readSeatMap, SEAT_ATTR, type CgvSeatRules } from '../adapters/cgv/seatmap.js';
 import type { HeldSession, HoldRequest, SeatHolder } from './session.js';
 
@@ -55,6 +61,10 @@ export interface CgvHolderOpts {
   stepTimeoutMs?: number;
   /** 고른 좌석을 알린다. 로그에 남겨두면 나중에 왜 그 자리였는지 알 수 있다. */
   onPick?(seats: Seat[]): void;
+  /** 어떤 전략으로 눌렸는지. null 이면 건너뛴 단계다. */
+  onStep?(step: string, how: string | null): void;
+  /** 날짜가 '오늘'·'내일' 인지 판정할 기준 시각. 테스트에서 고정한다. */
+  now?(): number;
   launch?(profileDir: string): Promise<BrowserContext>;
 }
 
@@ -90,11 +100,11 @@ export class CgvSeatHolder implements SeatHolder {
       await this.navigate(page, req.showtime);
       await this.assertNoCaptcha(page);
 
-      // 인원을 먼저 정해야 좌석이 눌린다.
+      // 인원을 먼저 정해야 좌석이 눌린다 — 다만 관마다 화면이 다르고 이미
+      // 1명으로 잡혀 있기도 하다. 못 찾으면 넘어간다. 진짜 필요했다면
+      // 다음 좌석 클릭이 실패하면서 그때 화면을 통째로 알려준다.
       const size = req.seats.length || req.pick?.party.size || 1;
-      await this.step('인원 선택', () =>
-        page.getByRole('button', { name: this.flow.audience }).first().click(),
-      );
+      await this.click(page, '인원 선택', audienceAttempts(this.flow, size), true);
 
       const seats = await this.chooseSeats(page, req, size);
       this.opts.onPick?.(seats);
@@ -105,13 +115,10 @@ export class CgvSeatHolder implements SeatHolder {
         );
       }
 
-      await this.step('선택완료', () =>
-        page.getByRole('button', { name: this.flow.seatsDone }).click(),
-      );
+      await this.click(page, '선택완료', nameAttempts(this.flow.seatsDone));
       // 좌석 화면의 "원  결제하기" — 다음 단계로 넘어가는 버튼이다.
-      await this.step('결제 화면 이동', () =>
-        page.getByRole('button', { name: this.flow.toPayment }).click(),
-      );
+      // 이름을 느슨하게 풀면 진짜 결제 버튼에 닿을 수 있어 그대로 쓴다.
+      await this.click(page, '결제 화면 이동', nameAttempts(this.flow.toPayment));
 
       // ── 종점 ──────────────────────────────────────────────
       // 결제 화면에 닿았는지 확인만 한다. flow.payNever 는 실제로 돈이
@@ -161,35 +168,36 @@ export class CgvSeatHolder implements SeatHolder {
     return best.seats;
   }
 
-  /** 예매·예약 → 영화 → 극장 → 극장선택 → 날짜 → 회차 → 확인 */
+  /**
+   * 예매·예약 → 영화 → 극장 → 극장선택 → 날짜 → 회차 → 확인
+   *
+   * 단계마다 후보를 여러 개 두고 되는 걸 쓴다. 처음에는 codegen 녹화에서
+   * 뽑은 셀렉터 하나씩만 박아뒀는데, 그건 녹화한 그날 그 화면의 사진일 뿐이라
+   * 날짜가 바뀌면 바로 어긋났다 — '내일' 은 날짜를 고르는 방법이 아니다.
+   */
   private async navigate(page: Page, s: Showtime): Promise<void> {
-    const f = this.flow;
-    await this.step('예매 진입', () =>
-      page.getByRole('button', { name: f.ticketing }).click(),
-    );
+    const now = this.opts.now?.() ?? Date.now();
+    await this.click(page, '예매 진입', ticketingAttempts(this.flow));
     // CGV 는 롯데와 달리 영화를 먼저 고른다.
-    await this.step('영화 선택', () =>
-      page.getByRole('button', { name: s.movieName }).first().click(),
-    );
-    await this.step('극장 선택', () =>
-      page.getByRole('button', { name: s.theaterName }).first().click(),
-    );
-    await this.step('극장 확정', () =>
-      page.getByRole('button', { name: f.confirmTheater }).click(),
-    );
-    await this.step('날짜 선택', () => page.getByRole('button', { name: dayName(s) }).click());
+    await this.click(page, '영화 선택', movieAttempts(s));
+    await this.click(page, '극장 선택', theaterAttempts(s));
+    await this.click(page, '극장 확정', nameAttempts(this.flow.confirmTheater));
+    await this.click(page, '날짜 선택', dateAttempts(s.playDate, now));
+    await this.click(page, '회차 선택', showtimeAttempts(s));
+    await this.click(page, '회차 확정', nameAttempts(this.flow.confirmShowtime));
+  }
 
-    // 회차 버튼 이름에는 잔여석이 들어 있고 그 사이에도 변한다.
-    // 시작 시각으로 좁히고, 같은 시각에 여러 관이 있으면 상영관으로 가른다.
-    await this.step('회차 선택', async () => {
-      const byTime = page.getByRole('button', { name: cgvShowtimePattern(s.startTime) });
-      const withScreen = byTime.filter({ hasText: cgvScreenPattern(s.screenName) });
-      const target = (await withScreen.count()) > 0 ? withScreen : byTime;
-      await target.first().click();
+  private async click(
+    page: Page,
+    step: string,
+    attempts: Attempt[],
+    optional = false,
+  ): Promise<void> {
+    await clickFirst(page, step, attempts, {
+      timeoutMs: this.stepTimeout,
+      optional,
+      ...(this.opts.onStep ? { onStep: this.opts.onStep } : {}),
     });
-    await this.step('회차 확정', () =>
-      page.getByRole('button', { name: f.confirmShowtime }).click(),
-    );
   }
 
   /** 캡차는 뚫지 않는다. 세션이 살아 있어야만 진행할 수 있다. */
@@ -223,6 +231,5 @@ export class CgvSeatHolder implements SeatHolder {
 
 /** 날짜 버튼 이름. 오늘·내일은 이름이 따로 붙는다. */
 export function dayName(s: Showtime): string | RegExp {
-  const day = String(Number(s.playDate.slice(6, 8)));
-  return new RegExp(`(^|\\D)${day}(\\D|$)`);
+  return dayPattern(Number(s.playDate.slice(6, 8)));
 }

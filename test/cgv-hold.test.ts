@@ -37,42 +37,63 @@ function seatEl(label: string, cls: string, x: number, y: number) {
 const FREE = 'seatMap_seatNumber__a seatMap_seatNormal__b';
 const SOLD = 'seatMap_seatNumber__a seatMap_seatNormal__b seatMap_seatDisabled__c';
 
-function fakeCgv(opts: { seats?: ReturnType<typeof seatEl>[]; captcha?: boolean } = {}) {
+/**
+ * 화면을 흉내 낸다.
+ *
+ * `present` 에 없는 이름은 **없는 것처럼 군다** — waitFor 가 던진다.
+ * 홀더가 후보를 차례로 시도하는지 보려면 실패하는 후보가 있어야 한다.
+ * 기본값은 아무거나 다 있는 화면이다.
+ */
+function fakeCgv(
+  opts: {
+    seats?: ReturnType<typeof seatEl>[];
+    captcha?: boolean;
+    /** 이 술어가 false 를 주는 이름은 화면에 없다. */
+    present?(label: string, kind: string): boolean;
+  } = {},
+) {
   const clicks: string[] = [];
+  const tried: string[] = [];
   const closed = { count: 0 };
   const seats = opts.seats ?? [
     seatEl('H5', FREE, 0, 100),
     seatEl('H6', FREE, 38, 100),
     seatEl('H7', SOLD, 76, 100),
   ];
+  const has = opts.present ?? (() => true);
 
-  const locator = (sel: string) => ({
-    first: () => locator(sel),
-    isVisible: async () => (sel === CGV_FLOW.captcha ? !!opts.captcha : false),
-    click: async () => { clicks.push(sel); },
-    waitFor: async () => {},
-  });
+  const node = (label: string, kind: string, visible = true) => {
+    const self: Record<string, unknown> = {
+      first: () => self,
+      filter: () => node(label, kind, false), // 필터를 건 쪽은 기본적으로 안 맞는 걸로
+      count: async () => (visible && has(label, kind) ? 1 : 0),
+      isVisible: async () => visible && has(label, kind),
+      waitFor: async () => {
+        tried.push(label);
+        if (!(visible && has(label, kind))) throw new Error(`없음: ${label}`);
+      },
+      click: async () => { clicks.push(label); },
+    };
+    return self;
+  };
+
+  const locator = (sel: string) =>
+    node(sel, 'locator', sel === CGV_FLOW.captcha ? !!opts.captcha : true);
 
   const page = {
     setDefaultTimeout: () => {},
     goto: async () => {},
+    url: () => 'https://cgv.co.kr/fake',
     locator,
-    $$eval: async () => seats,
-    getByRole: (role: string, o: { name: unknown }) => {
-      const label = String(o.name);
-      const node = {
-        first: () => node,
-        click: async () => { clicks.push(label); },
-        waitFor: async () => {},
-        count: async () => 1,
-        filter: () => ({ ...node, count: async () => 0 }),
-      };
-      return node;
-    },
+    $$eval: async (sel: string) => (sel.includes('data-seatlocno') ? seats : []),
+    getByRole: (kind: string, o: { name: unknown }) => node(String(o.name), kind),
+    getByText: (name: unknown) => node(String(name), 'text'),
+    getByLabel: (name: unknown) => node(String(name), 'label'),
   };
 
   return {
     clicks,
+    tried,
     closed,
     launch: async () =>
       ({
@@ -82,6 +103,8 @@ function fakeCgv(opts: { seats?: ReturnType<typeof seatEl>[]; captcha?: boolean 
       }) as never,
   };
 }
+
+const PICK_ONE = { block: null, party: { mode: 'single' as const, size: 1 } };
 
 describe('CgvSeatHolder', () => {
   /**
@@ -99,7 +122,7 @@ describe('CgvSeatHolder', () => {
     const session = await holder.hold({
       showtime: showtime(),
       seats: [],
-      pick: { block: null, party: { mode: 'single', size: 1 } },
+      pick: PICK_ONE,
     });
 
     expect(session.atPayment).toBe(true);
@@ -129,7 +152,7 @@ describe('CgvSeatHolder', () => {
     const holder = new CgvSeatHolder({ launch: cgv.launch });
 
     await expect(
-      holder.hold({ showtime: showtime(), seats: [], pick: { block: null, party: { mode: 'single', size: 1 } } }),
+      holder.hold({ showtime: showtime(), seats: [], pick: PICK_ONE }),
     ).rejects.toThrow(CgvNoSeatError);
     expect(cgv.closed.count).toBe(1);
   });
@@ -154,7 +177,7 @@ describe('CgvSeatHolder', () => {
     const holder = new CgvSeatHolder({ launch: cgv.launch });
 
     await expect(
-      holder.hold({ showtime: showtime(), seats: [], pick: { block: null, party: { mode: 'single', size: 1 } } }),
+      holder.hold({ showtime: showtime(), seats: [], pick: PICK_ONE }),
     ).rejects.toThrow(CgvCaptchaError);
     expect(cgv.closed.count).toBe(1);
   });
@@ -168,7 +191,7 @@ describe('CgvSeatHolder', () => {
     await new CgvSeatHolder({ launch: cgv.launch }).hold({
       showtime: showtime(),
       seats: [],
-      pick: { block: null, party: { mode: 'single', size: 1 } },
+      pick: PICK_ONE,
     });
 
     expect(cgv.clicks).toContain(CGV_FLOW.toPayment);
@@ -177,16 +200,72 @@ describe('CgvSeatHolder', () => {
 
   it('인원을 좌석보다 먼저 고른다', async () => {
     const cgv = fakeCgv();
-    await new CgvSeatHolder({ launch: cgv.launch }).hold({
+    const steps: string[] = [];
+    await new CgvSeatHolder({ launch: cgv.launch, onStep: (s) => steps.push(s) }).hold({
       showtime: showtime(),
       seats: [],
-      pick: { block: null, party: { mode: 'single', size: 1 } },
+      pick: PICK_ONE,
     });
 
-    const audienceAt = cgv.clicks.indexOf(CGV_FLOW.audience);
+    const audienceAt = steps.indexOf('인원 선택');
     const seatAt = cgv.clicks.findIndex((c) => c.includes('data-seatlocno'));
     expect(audienceAt).toBeGreaterThan(-1);
-    expect(audienceAt).toBeLessThan(seatAt);
+    expect(seatAt).toBeGreaterThan(-1);
+    // 인원은 좌석보다 먼저 끝나 있어야 한다
+    expect(steps.slice(0, audienceAt + 1)).toContain('회차 확정');
+  });
+
+  /**
+   * codegen 이 뽑아준 셀렉터 하나에만 기대면, 사이트가 조금만 달라도
+   * 조용히 멈춘다. 첫 후보가 없으면 다음 후보로 넘어가야 한다.
+   */
+  it('첫 후보가 없으면 다음 방법으로 넘어간다', async () => {
+    // 영화 제목이 button 이 아니라 a 로 그려진 화면.
+    const cgv = fakeCgv({ present: (l, kind) => !(kind === 'button' && l.includes('오디세이')) });
+    const steps: [string, string | null][] = [];
+
+    const session = await new CgvSeatHolder({
+      launch: cgv.launch,
+      stepTimeoutMs: 100,
+      onStep: (s, how) => steps.push([s, how]),
+    }).hold({ showtime: showtime(), seats: [], pick: PICK_ONE });
+
+    expect(session.atPayment).toBe(true);
+    const movie = steps.find(([s]) => s === '영화 선택');
+    expect(movie?.[1]).toBe('link "오디세이"');
+  });
+
+  /** 인원 선택은 화면마다 달라서 못 찾아도 계속 간다. */
+  it('인원 선택을 못 찾아도 좌석까지 간다', async () => {
+    const cgv = fakeCgv({
+      present: (l) => !(l === '선택' || l.includes('성인') || /data-(people|count)/.test(l)),
+    });
+    const steps: [string, string | null][] = [];
+
+    const session = await new CgvSeatHolder({
+      launch: cgv.launch,
+      stepTimeoutMs: 100,
+      onStep: (s, how) => steps.push([s, how]),
+    }).hold({ showtime: showtime(), seats: [], pick: PICK_ONE });
+
+    expect(session.atPayment).toBe(true);
+    expect(steps).toContainEqual(['인원 선택', null]);
+  });
+
+  /**
+   * 필수 단계를 끝내 못 찾으면, 그때 화면에 무엇이 있었는지 같이 던진다.
+   * 그게 없으면 사람이 재현해서 다시 찾아야 한다.
+   */
+  it('단계를 못 찾으면 화면 내용을 실어 던진다', async () => {
+    // 느슨한 후보는 정규식 형태로 오므로, 잡음을 걷어내고 견준다.
+    const clean = (s: string) => s.replace(/\\s/g, '').replace(/[[\]()*|^$/\s]/g, '');
+    const cgv = fakeCgv({ present: (l) => !clean(l).includes('오디세이') });
+    const holder = new CgvSeatHolder({ launch: cgv.launch, stepTimeoutMs: 100 });
+
+    await expect(
+      holder.hold({ showtime: showtime(), seats: [], pick: PICK_ONE }),
+    ).rejects.toThrow(/영화 선택.*시도:/s);
+    expect(cgv.closed.count).toBe(1);
   });
 
   it('release 는 여러 번 불려도 한 번만 닫는다', async () => {
@@ -194,7 +273,7 @@ describe('CgvSeatHolder', () => {
     const session = await new CgvSeatHolder({ launch: cgv.launch }).hold({
       showtime: showtime(),
       seats: [],
-      pick: { block: null, party: { mode: 'single', size: 1 } },
+      pick: PICK_ONE,
     });
 
     await session.release();
