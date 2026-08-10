@@ -682,3 +682,30 @@ describe('Watcher — 밀리면 물러선다', () => {
     expect(w.floorSec()).toBe(30); // 다섯 번 조용해야 한 단
   });
 });
+
+/**
+ * 화면에서 "2석 이상" 을 골랐는데 로그에는 "단석" 이 찍혔다.
+ * party.mode 를 그대로 찍고 있었는데, 좌석맵을 못 보는 체인에서 그 값은
+ * 아무 일도 하지 않는다. 실제로 걸리는 건 minIncrease 다.
+ */
+describe('Watcher — 실제로 걸리는 조건', () => {
+  it('좌석맵이 없으면 party 가 아니라 minIncrease 가 판정한다', async () => {
+    const h = harness([showtime({ remainingSeats: 0 })]);
+    const deps = { ...h.deps };
+    delete (deps as { fetchSeatMap?: unknown }).fetchSeatMap;
+
+    // party 는 단석인데 minIncrease 가 2 — 실제로 거는 건 뒤엣것이다
+    const w = new Watcher(
+      { ...SPEC, party: { mode: 'single', size: 1 }, minIncrease: 2 },
+      deps,
+      { coldStart: 'baseline' },
+    );
+
+    await poll(w, h);
+    h.setRows([showtime({ remainingSeats: 1 })]);
+    expect((await poll(w, h)).alerts).toHaveLength(0);
+
+    h.setRows([showtime({ remainingSeats: 3 })]);
+    expect((await poll(w, h)).alerts).toHaveLength(1);
+  });
+});

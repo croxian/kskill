@@ -258,6 +258,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
   var $ = function (id) { return document.getElementById(id); };
   var shows = [];      // 불러온 회차 (여러 지점이 섞일 수 있다)
   var theaters = {};   // code -> name, 불러온 지점
+  var floorSec = 10;   // 서버가 알려준다. 여기 적어두면 한쪽만 고치게 된다.
   var chosen = {};     // ref -> true
   var pollTimer = null;
 
@@ -290,6 +291,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
   })();
 
   fetch("/api/theaters").then(function (r) { return r.json(); }).then(function (d) {
+    if (d.floorSec) { floorSec = d.floorSec; sync(); }
     var sel = $("theater");
     d.theaters.forEach(function (t) {
       var o = document.createElement("option");
@@ -432,14 +434,17 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
     // 총량을 정하면 간격은 짝 수로 나눠 나온다.
     var sites = pickedTheaters().length || 1;
     var budget = Number($("budget").value) || 120;
-    var every = Math.max(15, Math.ceil((sites * 3600) / budget));
+    var every = Math.max(floorSec, Math.ceil((sites * 3600) / budget));
 
     $("budgetV").textContent = budget;
     $("stPicked").textContent = n + (sites > 1 ? " · " + sites + "지점" : "");
     $("stReq").innerHTML = every + '<small>초마다</small>';
+    var capped = Math.ceil((sites * 3600) / budget) < floorSec;
     $("budgetNote").innerHTML =
-      sites + "지점을 " + every + "초마다 봅니다. 지점을 늘리면 그만큼 성기게 " +
-      "보고 총량은 그대로입니다." +
+      sites + "지점을 " + every + "초마다 봅니다." +
+      (capped
+        ? " <b>하한 " + floorSec + "초</b>에 걸렸습니다 — 예산을 더 올려도 빨라지지 않습니다."
+        : " 지점을 늘리면 그만큼 성기게 보고 총량은 그대로입니다.") +
       (budget > 300
         ? " <b>차단당했던 날이 800회/시였습니다.</b> 이 근처는 피하세요."
         : budget < 60

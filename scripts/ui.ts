@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { createCgvAdapter } from '../src/adapters/cgv/adapter.js';
-import { showtimeRef, type WatchSpec } from '../src/core/spec.js';
+import { POLL_FLOOR_SEC, showtimeRef, type WatchSpec } from '../src/core/spec.js';
 import type { Showtime } from '../src/types.js';
 import { CGV_THEATERS } from './cgv-theaters.js';
 
@@ -43,7 +43,11 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${HOST}`);
   try {
     if (url.pathname === '/') return send(res, 200, page, 'text/html; charset=utf-8');
-    if (url.pathname === '/api/theaters') return json(res, { theaters: CGV_THEATERS });
+    // 하한을 화면에도 알려준다. 양쪽에 따로 적어두면 한쪽만 고치게 된다 —
+    // 실제로 하한을 15초에서 10초로 내리고 여기 두 군데를 놓쳤다.
+    if (url.pathname === '/api/theaters') {
+      return json(res, { theaters: CGV_THEATERS, floorSec: POLL_FLOOR_SEC });
+    }
     if (url.pathname === '/api/showtimes') return await showtimes(res, url);
     if (url.pathname === '/api/status') return json(res, status());
     if (url.pathname === '/api/start' && req.method === 'POST') return await start(req, res);
@@ -136,7 +140,7 @@ async function start(
     block: null,
     party: { mode: 'single', size: 1 },
     action: 'notify',
-    pollFloorSec: 15,
+    pollFloorSec: POLL_FLOOR_SEC,
     maxRequestsPerHour: Math.max(12, body.maxRequestsPerHour ?? 120),
     ...(body.minIncrease && body.minIncrease > 1 ? { minIncrease: body.minIncrease } : {}),
     maxAlertsPerRun: 5,

@@ -136,7 +136,7 @@ async function main() {
       log('⚠ 설정한 좌석 조건은 이번 감시에서 걸리지 않습니다. 알림에도 그렇게 표시됩니다.');
     }
   }
-  log(`조건 ${spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`} · 동작 ${spec.action}`);
+  log(`조건 ${describeCondition(spec, source.canFetchSeatMap)} · 동작 ${spec.action}`);
   log(`만료 ${spec.expiresAt}`);
   if (holdManager) {
     log(
@@ -267,6 +267,22 @@ async function main() {
     }
     await sleep(res.nextWakeMs);
   }
+}
+
+/**
+ * 실제로 걸리는 조건을 그대로 말한다.
+ *
+ * party.mode 를 그냥 찍고 있었는데, 좌석맵을 못 보는 체인에서는 그 값이
+ * 아무 일도 하지 않는다. 화면에서 "2석 이상" 을 골라도 로그에는 "단석" 이
+ * 찍혀서, 고른 조건이 무시된 것처럼 보였다. 실제로는 minIncrease 로
+ * 걸리고 있었는데 로그만 딴소리를 하고 있었다.
+ */
+function describeCondition(spec: WatchSpec, canFetchSeatMap: boolean): string {
+  if (!canFetchSeatMap) {
+    const need = spec.minIncrease ?? 1;
+    return need > 1 ? `한 번에 ${need}석 이상 해제` : '한 석이라도 해제';
+  }
+  return spec.party.mode === 'single' ? '단석' : `${spec.party.size}연석`;
 }
 
 function need(key: string): string {
