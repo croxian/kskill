@@ -63,6 +63,8 @@ select:focus-visible,input:focus-visible,button:focus-visible{
   outline:2px solid var(--lamp);outline-offset:1px;
 }
 input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:none;padding:0}
+.field>label span{font-family:var(--f-mono);color:var(--ink);font-size:12px}
 
 .btn{
   background:var(--raised);border:1px solid var(--rule);border-radius:3px;
@@ -195,7 +197,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
         <div class="panel-b stack">
           <dl class="stat">
             <div><dt>고른 회차</dt><dd id="stPicked">0</dd></div>
-            <div><dt>요청</dt><dd id="stReq">0<small> 회/시간</small></dd></div>
+            <div><dt>조회 간격</dt><dd id="stReq">—</dd></div>
           </dl>
 
           <div class="field">
@@ -213,20 +215,11 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
             같은 주기에 풀린 것일 수도 있습니다.
           </p>
 
-          <div class="row">
-            <div class="field" style="flex:1 1 110px">
-              <label for="floor">최소 간격</label>
-              <input type="number" id="floor" value="45" min="30" step="5">
-            </div>
-            <div class="field" style="flex:1 1 110px">
-              <label for="max">최대 간격</label>
-              <input type="number" id="max" value="60" min="30" step="10">
-            </div>
+          <div class="field">
+            <label for="budget">시간당 요청 <span id="budgetV">120</span>회</label>
+            <input type="range" id="budget" min="30" max="360" step="10" value="120">
           </div>
-          <p class="hint">
-            간격표는 상영이 멀면 느긋하게 봅니다. 매진된 특별관은 사흘 전에 난 자리도
-            즉시 사라지니 최대 간격으로 눌러둡니다. 하한 30초는 규약입니다.
-          </p>
+          <p class="hint" id="budgetNote"></p>
 
           <div class="row">
             <button class="btn go" id="start" disabled>감시 시작</button>
@@ -431,15 +424,25 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
     $("stPicked").textContent = n;
 
     // 요청은 지점 × 날짜로만 늘어난다. 회차를 몇 개 고르든 한 번에 다 온다.
-    var floor = Math.max(30, Number($("floor").value) || 45);
-    var cap = Math.max(floor, Number($("max").value) || 60);
+    // 총량을 정하면 간격은 짝 수로 나눠 나온다.
     var sites = pickedTheaters().length || 1;
+    var budget = Number($("budget").value) || 120;
+    var every = Math.max(15, Math.ceil((sites * 3600) / budget));
+
+    $("budgetV").textContent = budget;
     $("stPicked").textContent = n + (sites > 1 ? " · " + sites + "지점" : "");
-    $("stReq").innerHTML = Math.round((sites * 3600) / cap) + '<small> 회/시간</small>';
+    $("stReq").innerHTML = every + '<small>초마다</small>';
+    $("budgetNote").innerHTML =
+      sites + "지점을 " + every + "초마다 봅니다. 지점을 늘리면 그만큼 성기게 " +
+      "보고 총량은 그대로입니다." +
+      (budget > 300
+        ? " <b>차단당했던 날이 800회/시였습니다.</b>"
+        : budget < 60
+          ? " 느슨합니다 — 초 단위로 사라지는 자리는 대부분 놓칩니다."
+          : "");
     $("start").disabled = n === 0 || running;
   }
-  $("floor").addEventListener("input", sync);
-  $("max").addEventListener("input", sync);
+  $("budget").addEventListener("input", sync);
   $("need").addEventListener("change", sync);
 
   /** 고른 회차가 걸쳐 있는 지점만. 불러만 보고 안 고른 지점은 감시하지 않는다. */
@@ -467,8 +470,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
         theaters: pickedTheaters(),
         date: $("date").value,
         refs: refs,
-        pollFloorSec: Number($("floor").value) || 45,
-        maxIntervalSec: Number($("max").value) || 60,
+        maxRequestsPerHour: Number($("budget").value) || 120,
         minIncrease: Number($("need").value) || 1,
         lastStart: last
       })
@@ -488,7 +490,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
       (s.running ? "감시 중" : "멈춤");
     $("stop").hidden = !s.running;
     $("start").disabled = s.running || Object.keys(chosen).length === 0;
-    if (s.perHour) $("stReq").innerHTML = s.perHour + '<small> 회/시간</small>';
+    if (s.perHour) $("budget").value = String(s.perHour);
 
     var log = $("log");
     var atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;

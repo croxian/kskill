@@ -44,10 +44,20 @@ function showtime(over: Partial<Showtime> = {}): Showtime {
 }
 
 describe('normalizeSpec', () => {
-  it('폴링 하한 30초를 강제한다', () => {
-    expect(normalizeSpec({ ...base, pollFloorSec: 5 }).pollFloorSec).toBe(30);
-    expect(normalizeSpec({ ...base, pollFloorSec: 0 }).pollFloorSec).toBe(30);
+  /**
+   * 하한은 30초에서 15초로 내렸다. 30초는 요청 하나를 기준으로 삼은 규칙이라
+   * 총량과 어긋났다 — 짝이 하나뿐인 감시는 그보다 촘촘해도 서버가 받는
+   * 총량은 여전히 적다. 총량은 maxRequestsPerHour 가 지킨다.
+   */
+  it('폴링 하한을 강제한다', () => {
+    expect(normalizeSpec({ ...base, pollFloorSec: 5 }).pollFloorSec).toBe(15);
+    expect(normalizeSpec({ ...base, pollFloorSec: 0 }).pollFloorSec).toBe(15);
     expect(normalizeSpec({ ...base, pollFloorSec: 60 }).pollFloorSec).toBe(60);
+  });
+
+  it('총량 예산을 받는다', () => {
+    expect(normalizeSpec({ ...base, maxRequestsPerHour: 180 }).maxRequestsPerHour).toBe(180);
+    expect(normalizeSpec(base).maxRequestsPerHour).toBeUndefined();
   });
 
   it('단석이면 인원을 1로 고정한다', () => {

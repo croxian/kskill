@@ -77,8 +77,25 @@ export interface WatchSpec {
 
   // ── 동작 ──────────────────────────────────────────────────
   action: 'notify' | 'hold';
-  /** 폴링 간격 하한(초). 30 미만은 받지 않는다. */
+  /**
+   * 폴링 간격 하한(초).
+   *
+   * 예전에는 30초로 못 박았는데, 그건 요청 하나를 기준으로 삼은 규칙이었다.
+   * 서버가 실제로 느끼는 건 총량이다 — 1짝을 20초마다 보는 것(180회/시)이
+   * 10짝을 45초마다 보는 것(800회/시)보다 훨씬 가볍다. 그래서 총량 예산을
+   * 따로 두고, 이 값은 하한으로만 남긴다.
+   */
   pollFloorSec: number;
+  /**
+   * 시간당 요청 상한. 이걸로 총량을 정한다.
+   *
+   * 간격을 짝 수로 나눠 쓴다. 짝이 하나면 촘촘하게, 열이면 성기게 —
+   * 감시 대상을 늘려도 서버가 받는 부담은 같다. 감시 대상과 촘촘함 사이에서
+   * 무엇을 살지 사람이 정하는 값이다.
+   *
+   * 2026-08-10 차단 당시가 800회/시였다. 그 근처는 피하는 게 좋다.
+   */
+  maxRequestsPerHour?: number;
   /**
    * 한 번의 폴링에서 보낼 알림 상한.
    *
@@ -104,13 +121,20 @@ export interface WatchSpec {
   maxIntervalSec?: number;
 }
 
-export const POLL_FLOOR_SEC = 30;
+/**
+ * 어떤 경우에도 이보다 촘촘하게는 안 본다.
+ *
+ * 총량 예산이 주된 안전장치지만 하한도 남긴다. 초 단위로 두드리면 총량과
+ * 무관하게 순간 요청률이 튀고, 그건 엣지가 창 단위로 보는 값이다.
+ */
+export const POLL_FLOOR_SEC = 15;
 
 /** 하한을 강제하고 빠진 값을 채운다. 스펙을 만드는 모든 경로가 이걸 통과해야 한다. */
 export function normalizeSpec(spec: WatchSpec): WatchSpec {
   return {
     ...spec,
     pollFloorSec: Math.max(POLL_FLOOR_SEC, spec.pollFloorSec || POLL_FLOOR_SEC),
+    ...(spec.maxRequestsPerHour ? { maxRequestsPerHour: Math.max(1, spec.maxRequestsPerHour) } : {}),
     stopBeforeMin: spec.stopBeforeMin ?? 30,
     ...(spec.minIncrease && spec.minIncrease > 1 ? { minIncrease: spec.minIncrease } : {}),
     ...(spec.maxIntervalSec

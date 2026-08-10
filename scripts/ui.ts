@@ -105,8 +105,8 @@ interface StartBody {
   theaters: { theaterId: string; label?: string }[];
   date: string;
   refs: string[];
-  pollFloorSec?: number;
-  maxIntervalSec?: number;
+  /** 시간당 요청 상한. 간격은 여기서 짝 수로 나눠 나온다. */
+  maxRequestsPerHour?: number;
   /** 한 번에 이만큼 풀렸을 때만 알린다. 단석 1, 연석 2. */
   minIncrease?: number;
   lastStart?: string;
@@ -136,8 +136,8 @@ async function start(
     block: null,
     party: { mode: 'single', size: 1 },
     action: 'notify',
-    pollFloorSec: Math.max(30, body.pollFloorSec ?? 45),
-    maxIntervalSec: Math.max(30, body.maxIntervalSec ?? 60),
+    pollFloorSec: 15,
+    maxRequestsPerHour: Math.max(12, body.maxRequestsPerHour ?? 120),
     ...(body.minIncrease && body.minIncrease > 1 ? { minIncrease: body.minIncrease } : {}),
     maxAlertsPerRun: 5,
     expiresAt: endOfDay(body.date, body.lastStart ?? '23:59'),
@@ -185,12 +185,7 @@ function status() {
     spec,
     log,
     // 요청량을 화면에 계속 띄워둔다. 모르면 조절할 수 없다.
-    perHour: spec
-      ? Math.round(
-          (spec.theaters.length * spec.dates.length * 3600) /
-            Math.max(spec.pollFloorSec, Math.min(spec.maxIntervalSec ?? 1800, 1800)),
-        )
-      : 0,
+    perHour: spec?.maxRequestsPerHour ?? 0,
   };
 }
 

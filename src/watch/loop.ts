@@ -103,7 +103,9 @@ export class Watcher {
   ) {
     this.spec = normalizeSpec(spec);
     this.dedupe = new Dedupe(opts.cooldownMs);
-    if (opts.coldStart === 'baseline') this.cold = false;
+    // 회차를 집어서 고른 감시는 방금 그 목록을 눈으로 보고 고른 것이다.
+    // 첫 관측을 사건으로 알리면 시작하자마자 아는 사실을 되풀이할 뿐이다.
+    if (opts.coldStart === 'baseline' || this.spec.showtimes?.length) this.cold = false;
   }
 
   get expired(): boolean {
@@ -134,7 +136,7 @@ export class Watcher {
         failures++;
         this.deps.onError?.('1단', err, `theater[${p.idx}] ${p.date}`);
         // 실패한 짝도 곧 다시 본다. 다만 하한보다 촘촘하게는 안 본다.
-        this.nextPollAt.set(p.key, now + Math.max(spec.pollFloorSec, 60) * 1000);
+        this.nextPollAt.set(p.key, now + Math.max(this.floorSec(), 60) * 1000);
       }
     }
     const offline = due.length > 0 && failures === due.length;
@@ -220,7 +222,14 @@ export class Watcher {
 
       if (!this.dedupe.shouldSend(fingerprint(best.seats, showtime), now)) continue;
 
-      const alert: Alert = { spec, showtime, candidate: best, seatMap: map };
+      const rose = this.riseOf(showtime);
+      const alert: Alert = {
+        spec,
+        showtime,
+        candidate: best,
+        seatMap: map,
+        ...(rose !== undefined ? { increase: rose } : {}),
+      };
       alerts.push(alert);
       await this.deps.notify(alert);
 
@@ -270,11 +279,30 @@ export class Watcher {
       })),
       now,
       {
-        floorSec: this.spec.pollFloorSec,
+        floorSec: this.floorSec(),
         stopBeforeMin: this.spec.stopBeforeMin,
         ...(this.spec.maxIntervalSec ? { maxSec: this.spec.maxIntervalSec } : {}),
       },
     );
+  }
+
+  /**
+   * 실제로 지킬 간격 하한.
+   *
+   * 총량 예산을 짝 수로 나눈다. 짝이 하나면 촘촘하게, 열이면 성기게 —
+   * 어느 쪽이든 서버가 시간당 받는 요청 수는 같다. 감시 대상을 늘릴지
+   * 촘촘하게 볼지는 사람이 정하고, 총량은 여기서 지킨다.
+   */
+  floorSec(): number {
+    const budget = this.spec.maxRequestsPerHour;
+    if (!budget) return this.spec.pollFloorSec;
+    const pairs = Math.max(1, this.livePairs());
+    return Math.max(this.spec.pollFloorSec, Math.ceil((pairs * 3600) / budget));
+  }
+
+  /** 아직 볼 것이 남은 지점·날짜 짝의 수. 끝난 날짜는 예산을 안 쓴다. */
+  private livePairs(): number {
+    return this.spec.theaters.length * this.spec.dates.length - this.done.size;
   }
 
   /**
@@ -285,7 +313,7 @@ export class Watcher {
    */
   private nextWake(now: number, offline: boolean): number {
     if (this.expired) return STOP;
-    if (offline) return Math.max(this.spec.pollFloorSec, 60) * 1000;
+    if (offline) return Math.max(this.floorSec(), 60) * 1000;
 
     // 가장 먼저 깨어날 짝에 맞춘다. 아무 짝도 안 남았으면 끝난 것이다.
     const pending: number[] = [];
@@ -309,7 +337,7 @@ export class Watcher {
    */
   private timing(s: Showtime) {
     return {
-      floorSec: this.spec.pollFloorSec,
+      floorSec: this.floorSec(),
       stopBeforeMin: this.spec.stopBeforeMin,
       ...(this.spec.maxIntervalSec ? { maxSec: this.spec.maxIntervalSec } : {}),
       ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),

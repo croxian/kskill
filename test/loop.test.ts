@@ -553,3 +553,76 @@ describe('Watcher — 최소 증가분', () => {
     expect(res.nextWakeMs).not.toBe(STOP);
   });
 });
+
+/**
+ * 30초 하한은 요청 하나를 기준으로 삼은 규칙이었다. 서버가 실제로 느끼는
+ * 건 총량이다 — 1짝을 20초마다 보는 것이 10짝을 45초마다 보는 것보다 가볍다.
+ */
+describe('Watcher — 총량 예산', () => {
+  it('짝이 하나면 예산을 다 써서 촘촘하게 본다', () => {
+    const w = new Watcher(
+      { ...SPEC, maxRequestsPerHour: 180, pollFloorSec: 15 },
+      harness().deps,
+    );
+    expect(w.floorSec()).toBe(20); // 3600/180
+  });
+
+  it('짝이 늘면 그만큼 성기게 본다 — 총량은 같다', () => {
+    const w = new Watcher(
+      {
+        ...SPEC,
+        theaters: [
+          { chain: 'cgv', theaterId: '0013' },
+          { chain: 'cgv', theaterId: '0059' },
+        ],
+        dates: ['20260809', '20260810'],
+        maxRequestsPerHour: 180,
+        pollFloorSec: 15,
+      },
+      harness().deps,
+    );
+    expect(w.floorSec()).toBe(80); // 4짝 × 3600 / 180
+  });
+
+  /** 예산이 아무리 커도 하한은 깨지 않는다. 순간 요청률이 튀면 창 단위로 걸린다. */
+  it('예산이 커도 하한을 지킨다', () => {
+    const w = new Watcher(
+      { ...SPEC, maxRequestsPerHour: 100000, pollFloorSec: 15 },
+      harness().deps,
+    );
+    expect(w.floorSec()).toBe(15);
+  });
+
+  it('예산이 없으면 예전처럼 하한만 쓴다', () => {
+    const w = new Watcher({ ...SPEC, pollFloorSec: 45 }, harness().deps);
+    expect(w.floorSec()).toBe(45);
+  });
+});
+
+/**
+ * 회차를 집어서 고른 감시는 방금 그 목록을 눈으로 보고 고른 것이다.
+ * 첫 관측을 사건으로 알리면 시작하자마자 아는 사실을 되풀이할 뿐이다.
+ */
+describe('Watcher — 첫 관측은 기준점', () => {
+  it('회차를 집어 골랐으면 시작하자마자 알리지 않는다', async () => {
+    const h = harness([showtime({ remainingSeats: 6 })]);
+    const w = new Watcher({ ...SPEC, showtimes: ['1016:101609:4'] }, h.deps);
+
+    expect((await poll(w, h)).alerts).toHaveLength(0);
+  });
+
+  /** 그다음 늘어난 것은 사건이다. 6 → 3 → 5 에서 5 로 바뀔 때 알린다. */
+  it('줄었다 늘어도 알린다', async () => {
+    const h = harness([showtime({ remainingSeats: 6 })]);
+    const w = new Watcher({ ...SPEC, showtimes: ['1016:101609:4'] }, h.deps);
+
+    await poll(w, h);
+    h.setRows([showtime({ remainingSeats: 3 })]);
+    expect((await poll(w, h)).alerts).toHaveLength(0); // 3석 팔림
+
+    h.setRows([showtime({ remainingSeats: 5 })]);
+    const res = await poll(w, h);
+    expect(res.alerts).toHaveLength(1); // 2석 돌아옴
+    expect(res.alerts[0]!.increase).toBe(2);
+  });
+});
