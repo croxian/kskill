@@ -13,6 +13,7 @@
     "probe": "tsx scripts/probe-hold.ts",
     "cgv": "tsx scripts/cgv-raw.ts",
     "cgv:seats": "tsx scripts/cgv-seatmap.ts",
+    "cgv:seatdata": "tsx scripts/cgv-seatdata.ts",
     "browser": "playwright install chromium",
     "login": "playwright open --user-data-dir=.profile https://www.lottecinema.co.kr",
     "login:cgv": "playwright open --user-data-dir=.profile https://www.cgv.co.kr",

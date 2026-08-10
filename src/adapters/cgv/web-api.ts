@@ -34,8 +34,14 @@ export const CGV_WEB = {
   SEAT_MAP: '/booking/searchIfSeatData',
 
   /**
-   * 회차 상세. 총 좌석(stcnt)과 예매된 수(movbktCnt)가 같이 온다.
-   * 잔여 = stcnt - movbktCnt 로 교차 검증할 수 있다.
+   * 회차 상세.
+   *
+   * ⚠️ movbktCnt 는 이름과 달리 **예매된 수가 아니다.** 실측에서
+   * stcnt=320, frSeatCnt=287, movbktCnt=287 로 frSeatCnt 와 같았다.
+   * 잔여수는 frSeatCnt 를 그대로 쓴다 — 빼지 않는다.
+   *
+   * frtmpSeatCnt 는 그보다 1 많은 288 이었고, 그 순간 우리가 좌석 하나를
+   * 임시 점유하고 있었다. 임시 점유를 포함한 수로 보인다.
    */
   SHOWTIME_INFO: '/booking/searchAtktAdncSeatInfo',
 

@@ -2,6 +2,8 @@ import type { BrowserContext } from 'playwright';
 
 import { CGV, type CgvScnItem } from './api.js';
 import { signedHeaders } from './client.js';
+import { CGV_WEB } from './web-api.js';
+import type { CgvSeatDataResponse } from './web-parse.js';
 
 /**
  * 진짜 브라우저로 CGV API 를 부른다.
@@ -75,6 +77,54 @@ export class CgvBrowserClient {
     } catch {
       throw new Error(`CGV 응답 파싱 실패: ${text.slice(0, 120)}`);
     }
+  }
+
+  /**
+   * cgv.co.kr/api/v1 쪽 호출.
+   *
+   * api.cgv.co.kr 과 달리 서명이 없다. 웹앱이 자기 출처로 부르는 REST 라
+   * 세션 쿠키만 있으면 된다 — 그 쿠키는 이 브라우저 프로필에 들어 있다.
+   * 서명 헤더를 붙이면 오히려 Origin 이 어긋나므로 붙이지 않는다.
+   */
+  async getWeb(path: string, params: Record<string, string>): Promise<unknown> {
+    const ctx = await this.context();
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+
+    // 앞선 api.cgv.co.kr 호출이 남긴 서명 헤더를 지운다.
+    await ctx.setExtraHTTPHeaders({});
+
+    const url = `${CGV_WEB.BASE_URL}${path}?${new URLSearchParams(params).toString()}`;
+    const res = await page.goto(url, { waitUntil: 'domcontentloaded' });
+    if (!res) throw new Error(`CGV 응답 없음: ${path}`);
+    if (!res.ok()) throw new Error(`CGV HTTP ${res.status()}: ${path}`);
+
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      // 로그인이 풀리면 JSON 대신 로그인 화면 HTML 이 온다.
+      throw new Error(
+        text.includes('<') ? `CGV 가 JSON 대신 화면을 보냈습니다 (로그인 만료?): ${path}` : `CGV 응답 파싱 실패: ${path}`,
+      );
+    }
+  }
+
+  /** 한 회차의 좌석맵. custNo 는 계정 식별자라 넣지 않아도 되는지 실측으로 확인한다. */
+  async seatData(args: {
+    theaterCode: string;
+    playDate: string;
+    screenNo: string;
+    scnSseq: string;
+    custNo?: string;
+  }): Promise<CgvSeatDataResponse> {
+    return (await this.getWeb(CGV_WEB.SEAT_MAP, {
+      coCd: CGV_WEB.COMPANY_CODE,
+      siteNo: args.theaterCode,
+      scnYmd: args.playDate,
+      scnsNo: args.screenNo,
+      scnSseq: args.scnSseq,
+      ...(args.custNo ? { custNo: args.custNo } : {}),
+    })) as CgvSeatDataResponse;
   }
 
   async siteTimetable(theaterCode: string, playDate: string): Promise<CgvScnItem[]> {
