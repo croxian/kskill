@@ -137,7 +137,12 @@ async function main() {
     }
   }
   log(`조건 ${describeCondition(spec, source.canFetchSeatMap)} · 동작 ${spec.action}`);
-  log(`만료 ${spec.expiresAt}`);
+  log(`감시 종료 ${kst(spec.expiresAt)}`);
+  // 회차마다의 실제 중단 시각은 체인이 알려주는 판매 종료 시각이 정한다.
+  // 위 값은 그 바깥을 감싸는 안전장치라, 둘을 헷갈리면 왜 일찍 끝났는지 모른다.
+  if (chains.includes('cgv')) {
+    log('  회차별로는 판매 종료(상영 시작 15분 뒤)까지 봅니다');
+  }
   if (holdManager) {
     log(
       holdChains.has('cgv')
@@ -292,6 +297,21 @@ function need(key: string): string {
     process.exit(1);
   }
   return v;
+}
+
+/** ISO 문자열을 한국 시간으로. 로그에 UTC 를 그대로 찍으면 아무도 못 읽는다. */
+function kst(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 function log(s: string): void {

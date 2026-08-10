@@ -469,8 +469,11 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
 
   $("start").addEventListener("click", function () {
     var refs = Object.keys(chosen);
-    var last = shows.filter(function (s) { return chosen[s.ref]; })
-      .map(function (s) { return s.startTime; }).sort().pop();
+    // 감시는 판매가 끝날 때까지. CGV 는 상영 시작 15분 뒤까지 판다.
+    var picked = shows.filter(function (s) { return chosen[s.ref]; });
+    var lastSalesEnd = picked
+      .map(function (s) { return s.salesEndAt || s.startTime; })
+      .sort().pop();
 
     $("start").disabled = true;
     fetch("/api/start", {
@@ -482,7 +485,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
         refs: refs,
         maxRequestsPerHour: Number($("budget").value) || 120,
         minIncrease: Number($("need").value) || 1,
-        lastStart: last
+        lastSalesEnd: lastSalesEnd
       })
     })
       .then(function (r) { return r.json(); })

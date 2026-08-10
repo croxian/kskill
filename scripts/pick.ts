@@ -160,7 +160,11 @@ function buildSpec(
   date: string,
   picked: Showtime[],
 ): WatchSpec {
-  const last = [...picked].sort((a, b) => a.startTime.localeCompare(b.startTime)).at(-1)!;
+  // 감시는 판매가 끝날 때까지. CGV 는 상영 시작 15분 뒤까지 판다.
+  const lastEnd = [...picked]
+    .map((s) => s.salesEndAt ?? s.startTime)
+    .sort()
+    .at(-1)!;
   return {
     id: `cgv-${theater.code}-${date}`,
     theaters: [{ chain: 'cgv' as const, theaterId: theater.code, label: theater.name }],
@@ -176,7 +180,7 @@ function buildSpec(
     // 무관하게 자주 본다. 회차를 좁혔으니 요청은 여전히 1건/주기다.
     maxIntervalSec: 60,
     maxAlertsPerRun: 5,
-    expiresAt: endOfDay(date, last.startTime),
+    expiresAt: watchUntil(date, lastEnd),
   };
 }
 
@@ -236,13 +240,14 @@ function fmtDate(ymd: string): string {
   return `${+ymd.slice(4, 6)}월 ${+ymd.slice(6, 8)}일(${w})`;
 }
 
-/** 마지막 회차가 끝날 무렵. 무한 감시를 막는 안전장치라 넉넉히 잡지 않는다. */
-function endOfDay(ymd: string, lastStart: string): string {
-  const [h = '23', m = '59'] = lastStart.split(':');
-  const end = new Date(
-    Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8), +h - 9, +m) + 3_600_000,
-  );
-  return end.toISOString();
+/**
+ * 마지막 판매 종료 + 5분. 회차별 중단은 감시기가 salesEndAt 으로 지키고,
+ * 이건 그 바깥을 감싸는 안전장치다.
+ */
+function watchUntil(ymd: string, lastSalesEnd: string): string {
+  const base = Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)) - 9 * 3_600_000;
+  const [h = '23', m = '59'] = lastSalesEnd.split(':');
+  return new Date(base + (+h * 60 + +m + 5) * 60_000).toISOString();
 }
 
 type Interface = ReturnType<typeof createInterface>;

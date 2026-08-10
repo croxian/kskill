@@ -108,6 +108,8 @@ function brief(s: Showtime) {
     movieId: s.movieId,
     remainingSeats: s.remainingSeats,
     totalSeats: s.totalSeats,
+    // CGV 는 상영 시작 15분 뒤까지 판다. 감시를 언제까지 할지는 이 값이 정한다.
+    ...(s.salesEndAt ? { salesEndAt: s.salesEndAt } : {}),
   };
 }
 
@@ -126,7 +128,8 @@ interface StartBody {
   maxRequestsPerHour?: number;
   /** 한 번에 이만큼 풀렸을 때만 알린다. 단석 1, 연석 2. */
   minIncrease?: number;
-  lastStart?: string;
+  /** 고른 회차 중 가장 늦은 판매 종료 시각 'HH:mm'. */
+  lastSalesEnd?: string;
 }
 
 async function start(
@@ -157,7 +160,7 @@ async function start(
     maxRequestsPerHour: Math.max(12, body.maxRequestsPerHour ?? 120),
     ...(body.minIncrease && body.minIncrease > 1 ? { minIncrease: body.minIncrease } : {}),
     maxAlertsPerRun: 5,
-    expiresAt: endOfDay(body.date, body.lastStart ?? '23:59'),
+    expiresAt: watchUntil(body.date, body.lastSalesEnd),
   };
   writeFileSync(CONFIG, `${JSON.stringify(spec, null, 2)}\n`, 'utf8');
 
@@ -223,12 +226,22 @@ function stamp(): string {
   return `[${new Date().toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Seoul' })}]`;
 }
 
-/** 마지막 회차가 끝난 뒤 한 시간. 무한 감시를 막는 안전장치다. */
-function endOfDay(ymd: string, lastStart: string): string {
-  const [h = '23', m = '59'] = lastStart.split(':');
-  return new Date(
-    Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8), +h - 9, +m) + 3_600_000,
-  ).toISOString();
+/**
+ * 언제까지 감시할 것인가.
+ *
+ * 처음에는 마지막 회차 시작 + 1시간으로 잡았는데, 그건 아무 근거 없는
+ * 숫자였다. CGV 는 상영 시작 15분 뒤까지 판다 (실측: 18:00 회차의
+ * salEndTm 이 18:15). 회차마다의 실제 중단 시각은 감시기가 salesEndAt 으로
+ * 이미 지키고 있고, 이 값은 그 바깥을 감싸는 안전장치다.
+ *
+ * 그래서 마지막 판매 종료 시각에 5분만 얹는다. 회차별 중단이 먼저 걸리고,
+ * 이건 그게 어긋났을 때만 작동한다. 판매 종료를 모르면 그날 자정을 쓴다.
+ */
+function watchUntil(ymd: string, lastSalesEnd?: string): string {
+  const base = Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)) - 9 * 3_600_000;
+  if (!lastSalesEnd) return new Date(base + 24 * 3_600_000).toISOString();
+  const [h = '23', m = '59'] = lastSalesEnd.split(':');
+  return new Date(base + (+h * 60 + +m + 5) * 60_000).toISOString();
 }
 
 /** 창을 닫으면 감시도 함께 멈춘다. 몰래 남아 계속 조회하면 안 된다. */
