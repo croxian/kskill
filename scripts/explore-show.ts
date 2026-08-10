@@ -12,60 +12,92 @@ import type { ScreenDump } from '../src/hold/resolve.js';
  * 필요한 것만 추려서 붙여넣을 수 있는 크기로 만든다.
  */
 
-const DIR = 'fixtures/explore';
+const ROOT = 'fixtures/explore';
+
+/** 예매 흐름일 가능성이 큰 경로. 이것만 자세히 편다. */
+const INTERESTING = /seat|atkt|book|scn|schedule|visitor|price|ticket/i;
 
 interface ApiDump {
-  host: string;
-  method: string;
-  path: string;
-  query: Record<string, string>;
-  postData: unknown;
-  status: number;
-  body: unknown;
+  host?: string;
+  method?: string;
+  path?: string;
+  query?: Record<string, string>;
+  postData?: unknown;
+  status?: number;
+  body?: unknown;
+}
+
+/** 가장 최근 실행 폴더. 옛날처럼 파일이 바로 들어 있으면 그 폴더를 쓴다. */
+function latestRun(dir = ROOT): string {
+  const runs = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+  return runs.length ? join(dir, runs[runs.length - 1]!) : dir;
 }
 
 function main() {
+  let dir: string;
   let files: string[];
   try {
-    files = readdirSync(DIR).sort();
+    dir = latestRun();
+    files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
   } catch {
-    console.error(`${DIR} 가 없습니다. 먼저 npm run explore 를 돌리세요.`);
+    console.error(`${ROOT} 가 없습니다. 먼저 npm run explore 를 돌리세요.`);
     process.exit(1);
   }
+  console.log(`(${dir})`);
 
   const screens = files.filter((f) => !f.startsWith('api-'));
   const apis = files.filter((f) => f.startsWith('api-'));
 
-  console.log('═══ 화면 ═══');
+  console.log('\n═══ 화면 ═══');
   for (const f of screens) {
-    const d = read<ScreenDump>(f);
+    const d = read<ScreenDump>(dir, f);
     if (!d) continue;
     console.log(`\n▸ ${f}`);
-    console.log(`  ${d.url}`);
+    console.log(`  ${d.url ?? '?'}`);
     if (d.seats) console.log(`  좌석 ${d.seats}개`);
-    for (const i of d.items.slice(0, 40)) {
+    for (const i of (d.items ?? []).slice(0, 40)) {
       const tag = i.tag + (i.role ? `[${i.role}]` : '');
       console.log(`    ${tag.padEnd(12)} ${i.name}${i.hint ? `  · ${i.hint}` : ''}`);
     }
-    if (d.items.length > 40) console.log(`    … 외 ${d.items.length - 40}개`);
+    const extra = (d.items ?? []).length - 40;
+    if (extra > 0) console.log(`    … 외 ${extra}개`);
   }
 
-  console.log('\n═══ API ═══');
-  // 같은 엔드포인트가 여러 번 불린다. 경로별로 한 번만 보여준다.
-  const seen = new Set<string>();
+  // 같은 엔드포인트가 여러 번 불린다. 먼저 목록으로 훑고, 예매 관련만 편다.
+  const byKey = new Map<string, { d: ApiDump; file: string; hits: number }>();
   for (const f of apis) {
-    const d = read<ApiDump>(f);
+    const d = read<ApiDump>(dir, f);
     if (!d) continue;
-    const key = `${d.method} ${d.path}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = `${d.method ?? 'GET'} ${d.host ?? '?'}${d.path ?? f}`;
+    const prev = byKey.get(key);
+    if (prev) prev.hits++;
+    else byKey.set(key, { d, file: f, hits: 1 });
+  }
 
-    console.log(`\n▸ ${d.method} ${d.host}${d.path}  [${d.status}]  (${f})`);
-    if (Object.keys(d.query).length) console.log(`  query  ${JSON.stringify(d.query)}`);
-    if (d.postData) console.log(`  body   ${clip(JSON.stringify(d.postData), 300)}`);
+  console.log('\n═══ API 목록 ═══');
+  for (const [key, { d, hits }] of byKey) {
+    const mark = INTERESTING.test(d.path ?? '') ? '★' : ' ';
+    console.log(`  ${mark} ${key}  [${d.status ?? '?'}] ${hits > 1 ? `(${hits}회)` : ''}`);
+  }
+
+  const hot = [...byKey.values()].filter((v) => INTERESTING.test(v.d.path ?? ''));
+  console.log('\n═══ 예매 관련 상세 ═══');
+  if (hot.length === 0) {
+    console.log('  없습니다. 예매 호출이 XHR 이 아닐 수 있습니다.');
+  }
+  for (const { d, file } of hot) {
+    console.log(`\n▸ ${d.method ?? 'GET'} ${d.host ?? '?'}${d.path ?? ''}  (${file})`);
+    if (d.query && Object.keys(d.query).length) {
+      console.log(`  query  ${JSON.stringify(d.query)}`);
+    }
+    if (d.postData) console.log(`  body   ${clip(JSON.stringify(d.postData), 400)}`);
     console.log(`  응답    ${shape(d.body)}`);
   }
-  console.log(`\n화면 ${screens.length}건 · API ${seen.size}종 (${apis.length}회 호출)`);
+
+  console.log(`\n화면 ${screens.length}건 · API ${byKey.size}종 (${apis.length}회 호출)`);
 }
 
 /**
@@ -99,9 +131,9 @@ function clip(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
-function read<T>(f: string): T | null {
+function read<T>(dir: string, f: string): T | null {
   try {
-    return JSON.parse(readFileSync(join(DIR, f), 'utf8')) as T;
+    return JSON.parse(readFileSync(join(dir, f), 'utf8')) as T;
   } catch {
     return null;
   }

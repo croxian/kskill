@@ -28,7 +28,20 @@ import { describeScreen, formatScreen } from '../src/hold/resolve.js';
  * 커밋하지 말 것 — .gitignore 에 넣어 두었다.
  */
 
-const OUT = 'fixtures/explore';
+/**
+ * 실행할 때마다 새 폴더에 쌓는다.
+ *
+ * 한 폴더에 겹쳐 쌓았더니 지난 실행의 파일이 남아 요약기가 옛 형식에서
+ * 터졌다. 회차를 나누면 그 일이 없고, 어떤 실행에서 나온 건지도 분명해진다.
+ */
+const ROOT = 'fixtures/explore';
+const OUT = join(ROOT, stamp());
+
+function stamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
 
 /**
  * 처음엔 api.cgv.co.kr 만 봤는데 예매 호출이 하나도 안 잡혔다.
@@ -37,12 +50,24 @@ const OUT = 'fixtures/explore';
  */
 function isCgvJson(url: URL, contentType: string): boolean {
   if (!/(^|\.)cgv\.co\.kr$/.test(url.hostname)) return false;
+  if (SKIP_HOST.test(url.hostname)) return false;
   if (!/json/i.test(contentType)) return false;
-  return !SKIP.some((s) => url.pathname.includes(s));
+  return !SKIP_PATH.some((s) => url.pathname.includes(s));
 }
 
+/** 정적 파일 호스트. Lottie 애니메이션도 JSON 이라 그냥 두면 섞여 들어온다. */
+const SKIP_HOST = /^(cdn|img|image|static|asset)/;
+
 /** 배너·공지·로고. 매 화면 수십 개씩 오는데 예매와 무관하다. */
-const SKIP = ['/scrDsp/', '/mngrNtce/', '/checkScrenUrlValid', 'Cpot', 'Logo'];
+const SKIP_PATH = [
+  '/scrDsp/',
+  '/mngrNtce/',
+  '/checkScrenUrlValid',
+  'Cpot',
+  'Logo',
+  '/static/',
+  '/animations/',
+];
 
 /** 예매 흐름일 가능성이 큰 경로. 콘솔에서 눈에 띄게 찍는다. */
 const INTERESTING = /seat|Seat|atkt|book|Book|scn|Scn|schedule|visitor|Visitor|price|Price/;
