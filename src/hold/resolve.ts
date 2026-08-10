@@ -109,6 +109,8 @@ export async function describeScreen(page: Page): Promise<ScreenDump> {
       (els) =>
         els
           .filter((el) => (el as HTMLElement).getClientRects().length > 0)
+          // 좌석은 수백 개다. 섞어 두면 정작 필요한 버튼이 상한에 밀려 사라진다.
+          .filter((el) => !el.hasAttribute('data-seatlocno'))
           .map((el) => {
             const h = el as HTMLElement;
             const attrs: string[] = [];

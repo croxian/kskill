@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { BrowserContext, Page, Request } from 'playwright';
+import type { Page } from 'playwright';
 
 import { describeScreen, formatScreen } from '../src/hold/resolve.js';
 
@@ -29,7 +29,23 @@ import { describeScreen, formatScreen } from '../src/hold/resolve.js';
  */
 
 const OUT = 'fixtures/explore';
-const API_HOST = 'api.cgv.co.kr';
+
+/**
+ * 처음엔 api.cgv.co.kr 만 봤는데 예매 호출이 하나도 안 잡혔다.
+ * 실측에서 걸린 건 배너·공지(met/dsp/scrDsp)뿐이었다 — 예매는 다른 호스트를 쓴다.
+ * 그래서 cgv 계열 호스트에서 오는 JSON 을 전부 본다.
+ */
+function isCgvJson(url: URL, contentType: string): boolean {
+  if (!/(^|\.)cgv\.co\.kr$/.test(url.hostname)) return false;
+  if (!/json/i.test(contentType)) return false;
+  return !SKIP.some((s) => url.pathname.includes(s));
+}
+
+/** 배너·공지·로고. 매 화면 수십 개씩 오는데 예매와 무관하다. */
+const SKIP = ['/scrDsp/', '/mngrNtce/', '/checkScrenUrlValid', 'Cpot', 'Logo'];
+
+/** 예매 흐름일 가능성이 큰 경로. 콘솔에서 눈에 띄게 찍는다. */
+const INTERESTING = /seat|Seat|atkt|book|Book|scn|Scn|schedule|visitor|Visitor|price|Price/;
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
@@ -56,21 +72,27 @@ async function main() {
   // 화면이 통째로 다시 그려져도 버튼이 살아 있도록 계속 다시 붙인다.
   await ctx.addInitScript(BUTTON);
 
-  ctx.on('request', (req) => void noteRequest(req));
   ctx.on('response', async (res) => {
     const url = new URL(res.url());
-    if (url.hostname !== API_HOST) return;
+    const type = res.headers()['content-type'] ?? '';
+    if (!isCgvJson(url, type)) return;
+
     calls++;
+    const req = res.request();
     const body = await res.text().catch(() => '');
     const name = `api-${String(calls).padStart(2, '0')}-${slug(url.pathname)}.json`;
     writeFileSync(
       join(OUT, name),
       JSON.stringify(
         {
+          host: url.hostname,
+          method: req.method(),
           path: url.pathname,
-          params: Object.fromEntries(url.searchParams),
+          query: Object.fromEntries(url.searchParams),
+          // 예매 호출은 POST 가 많다. 본문이 곧 계약이다.
+          postData: parse(req.postData() ?? ''),
           status: res.status(),
-          headers: sanitize(res.request().headers()),
+          headers: sanitize(req.headers()),
           body: parse(body),
         },
         null,
@@ -78,7 +100,8 @@ async function main() {
       ),
       'utf8',
     );
-    console.log(`   API ${res.status()} ${url.pathname}?${url.searchParams} → ${name}`);
+    const mark = INTERESTING.test(url.pathname) ? '★' : ' ';
+    console.log(`  ${mark} ${req.method()} ${res.status()} ${url.hostname}${url.pathname} → ${name}`);
   });
 
   const page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -97,14 +120,6 @@ async function main() {
 
   await new Promise<void>((resolve) => ctx.on('close', () => resolve()));
   console.log(`\n덤프 ${dumps}건 · API 호출 ${calls}건 을 ${OUT}/ 에 남겼습니다.`);
-}
-
-/** 요청 쪽은 콘솔에만. 서명 헤더가 어떻게 붙는지 눈으로 보려는 것이다. */
-function noteRequest(req: Request): void {
-  const url = new URL(req.url());
-  if (url.hostname !== API_HOST) return;
-  const h = req.headers();
-  if (h['x-signature']) console.log(`   → 서명 있음: ${url.pathname}`);
 }
 
 /** 쿠키와 토큰은 남기지 않는다. 계약을 알아내려는 것이지 세션이 필요한 게 아니다. */
