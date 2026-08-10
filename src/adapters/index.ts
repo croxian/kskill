@@ -18,9 +18,13 @@ export function createAdapter(theaters: TheaterRef[]) {
   /**
    * 좌석맵을 구할 수 있는 체인이 하나라도 있는가.
    *
-   * CGV 는 아직 좌석맵 경로가 없다 — 서명이 필요한 API 라 좌석 단위 조회를
-   * 뚫지 못했고, 브라우저 DOM 에서 읽는 건 점유 단계와 함께 붙일 예정이다.
-   * 그때까지는 카운트만으로 알린다. 좌석을 모르는 편이 알림이 없는 것보다 낫다.
+   * CGV 는 좌석맵을 쓰지 않는다. 경로를 못 찾아서가 아니라 **안 쓰기로 한
+   * 것이다.** searchIfSeatData 로 좌석을 다 받아올 수 있다는 건 확인했고
+   * 파서까지 있다(cgv/web-parse.ts). 그런데 그 경로를 반복 호출하다가
+   * 2026-08-10 에 차단당했다. 잔여수 조회는 다른 호스트이고 탈이 없었다.
+   *
+   * 그래서 CGV 는 카운트만 본다. 좌석 블록·연석 조건은 걸리지 않고,
+   * 그 사실을 알림 안에 적는다 — 조용히 무시하면 오해한다.
    */
   const seatMapChains = new Set<string>(['lotte']);
   const canFetchSeatMap = theaters.some((t) => seatMapChains.has(t.chain));

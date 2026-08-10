@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "fixture": "node scripts/make-fixture.mjs",
     "watch": "tsx --env-file-if-exists=.env src/main.ts",
+    "ui": "tsx scripts/ui.ts",
+    "pick": "tsx scripts/pick.ts",
     "probe": "tsx scripts/probe-hold.ts",
     "cgv": "tsx scripts/cgv-raw.ts",
     "cgv:seats": "tsx scripts/cgv-seatmap.ts",

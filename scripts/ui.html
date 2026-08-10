@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGV 빈자리 감시</title>
+<style>
+/*
+ * 터미널 옆에 띄워두는 콘솔이라 어두운 쪽으로 고정한다.
+ * 로그가 화면의 절반을 차지하고, 그건 원래 검은 바탕에 사는 것이다.
+ */
+:root{
+  --ground:#0F1117; --surface:#171A22; --raised:#1E222C; --sunk:#0B0D12;
+  --rule:#2A2F3C; --rule-soft:#222632;
+  --ink:#E6E8EF; --body:#C3C8D4; --dim:#868DA0; --faint:#5C6376;
+  --lamp:#E0913A; --lamp-soft:rgba(224,145,58,.13);
+  --gone:#C1554F; --gone-soft:rgba(193,85,79,.13);
+  --open:#4E9E7A;
+  --f-ui:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif;
+  --f-mono:"D2Coding","JetBrains Mono","SFMono-Regular",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--ground); color:var(--body);
+  font-family:var(--f-ui); font-size:14px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+button,input,select{font:inherit;color:inherit}
+
+.wrap{max-width:1240px;margin:0 auto;padding:28px 24px 64px}
+
+header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+h1{
+  margin:0; font-size:21px; font-weight:750; letter-spacing:-.02em; color:var(--ink);
+}
+.sub{color:var(--faint);font-size:12.5px}
+.lead{
+  margin:0 0 26px; max-width:62ch; color:var(--dim); font-size:13px;
+  padding-bottom:22px; border-bottom:1px solid var(--rule);
+}
+
+.cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:26px;align-items:start}
+@media (max-width:940px){.cols{grid-template-columns:1fr}}
+
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:4px}
+.panel-h{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:11px 16px;border-bottom:1px solid var(--rule);
+  font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);
+}
+.panel-b{padding:16px}
+
+/* ── 고르기 ── */
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field>label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+select,input[type=text],input[type=number]{
+  background:var(--sunk);border:1px solid var(--rule);border-radius:3px;
+  padding:7px 9px;min-width:0;
+}
+select:focus-visible,input:focus-visible,button:focus-visible{
+  outline:2px solid var(--lamp);outline-offset:1px;
+}
+input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+
+.btn{
+  background:var(--raised);border:1px solid var(--rule);border-radius:3px;
+  padding:7px 15px;cursor:pointer;font-weight:600;color:var(--ink);
+  transition:border-color .12s,background .12s;
+}
+.btn:hover:not(:disabled){border-color:var(--faint)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.go{background:var(--lamp);border-color:var(--lamp);color:#20150A}
+.btn.go:hover:not(:disabled){background:#EDA24C}
+.btn.halt{border-color:var(--gone);color:var(--gone)}
+
+/* ── 회차 표 ── */
+.list{max-height:480px;overflow:auto;border-top:1px solid var(--rule-soft)}
+.st{
+  display:grid;grid-template-columns:22px 58px 84px 1fr;gap:10px;align-items:center;
+  padding:7px 16px 7px 12px;border-bottom:1px solid var(--rule-soft);
+  border-left:2px solid transparent;cursor:pointer;
+}
+.st:hover{background:var(--raised)}
+.st.sold{border-left-color:var(--gone)}
+.st.on{background:var(--lamp-soft);border-left-color:var(--lamp)}
+.st input{accent-color:var(--lamp);cursor:pointer}
+.st .t{font-family:var(--f-mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.st .n{
+  font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:12.5px;
+  text-align:right;color:var(--open);
+}
+.st.sold .n{color:var(--gone);font-weight:700}
+.st .m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.st .m i{font-style:normal;color:var(--faint)}
+
+.hint{margin:10px 0 0;font-size:12px;color:var(--faint)}
+.quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.quick button{
+  background:none;border:1px solid var(--rule);border-radius:99px;
+  padding:3px 11px;font-size:12px;color:var(--dim);cursor:pointer;
+}
+.quick button:hover{border-color:var(--faint);color:var(--ink)}
+
+/* ── 부담 ── */
+.stat{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.stat div{background:var(--surface);padding:11px 13px}
+.stat dt{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin:0}
+.stat dd{
+  margin:3px 0 0;font-family:var(--f-mono);font-variant-numeric:tabular-nums;
+  font-size:19px;color:var(--ink);
+}
+.stat dd small{font-size:11px;color:var(--dim);font-family:var(--f-ui)}
+
+/* ── 로그 ── */
+.log{
+  background:var(--sunk);border:1px solid var(--rule);border-radius:3px;
+  font-family:var(--f-mono);font-size:11.5px;line-height:1.75;
+  padding:11px 13px;height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;
+  color:var(--body);
+}
+.log:empty::before{content:"감시를 시작하면 여기에 찍힙니다.";color:var(--faint)}
+
+.dot{display:inline-block;width:7px;height:7px;border-radius:99px;background:var(--faint);margin-right:6px;vertical-align:middle}
+.dot.live{background:var(--open);box-shadow:0 0 0 3px rgba(78,158,122,.18)}
+
+.note{
+  border:1px solid var(--rule);border-left:2px solid var(--lamp);border-radius:3px;
+  padding:12px 14px;font-size:12.5px;color:var(--dim);background:var(--surface);
+}
+.note.bad{border-left-color:var(--gone);background:var(--gone-soft);color:var(--ink)}
+.note b{color:var(--ink)}
+.note code{font-family:var(--f-mono);font-size:11.5px}
+.stack{display:flex;flex-direction:column;gap:14px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>CGV 빈자리 감시</h1>
+    <span class="sub">로컬 콘솔 · 이 창을 닫으면 감시도 멈춥니다</span>
+  </header>
+  <p class="lead">
+    회차를 불러와 고르면 설정을 쓰고 감시를 띄웁니다. 빈자리가 나면 텔레그램으로 알립니다.
+    좌석을 잡아주지는 않습니다 — 알림을 받고 앱에서 직접 누르는 쪽이 더 빠릅니다.
+  </p>
+
+  <div class="cols">
+    <!-- ── 왼쪽: 고르기 ── -->
+    <section class="panel">
+      <div class="panel-h"><span>회차 고르기</span><span id="count">—</span></div>
+      <div class="panel-b">
+        <div class="row">
+          <div class="field" style="flex:1 1 200px">
+            <label for="theater">지점</label>
+            <select id="theater"></select>
+          </div>
+          <div class="field" style="flex:0 0 118px">
+            <label for="code">코드 직접</label>
+            <input type="text" id="code" inputmode="numeric" maxlength="4" placeholder="0013">
+          </div>
+          <div class="field" style="flex:1 1 170px">
+            <label for="date">날짜</label>
+            <select id="date"></select>
+          </div>
+          <button class="btn" id="load">불러오기</button>
+        </div>
+
+        <div class="quick" id="quick" hidden>
+          <button data-pick="sold">매진만</button>
+          <button data-pick="imax">IMAX</button>
+          <button data-pick="all">전부</button>
+          <button data-pick="none">해제</button>
+        </div>
+      </div>
+      <div class="list" id="list" hidden></div>
+      <div class="panel-b" id="pickNote" hidden>
+        <p class="hint" id="hint"></p>
+      </div>
+    </section>
+
+    <!-- ── 오른쪽: 감시 ── -->
+    <section class="stack">
+      <div class="panel">
+        <div class="panel-h">
+          <span>감시</span>
+          <span id="state"><span class="dot"></span>멈춤</span>
+        </div>
+        <div class="panel-b stack">
+          <dl class="stat">
+            <div><dt>고른 회차</dt><dd id="stPicked">0</dd></div>
+            <div><dt>요청</dt><dd id="stReq">0<small> 회/시간</small></dd></div>
+          </dl>
+
+          <div class="row">
+            <div class="field" style="flex:1 1 110px">
+              <label for="floor">최소 간격</label>
+              <input type="number" id="floor" value="45" min="30" step="5">
+            </div>
+            <div class="field" style="flex:1 1 110px">
+              <label for="max">최대 간격</label>
+              <input type="number" id="max" value="60" min="30" step="10">
+            </div>
+          </div>
+          <p class="hint">
+            간격표는 상영이 멀면 느긋하게 봅니다. 매진된 특별관은 사흘 전에 난 자리도
+            즉시 사라지니 최대 간격으로 눌러둡니다. 하한 30초는 규약입니다.
+          </p>
+
+          <div class="row">
+            <button class="btn go" id="start" disabled>감시 시작</button>
+            <button class="btn halt" id="stop" hidden>중지</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h"><span>로그</span></div>
+        <div class="panel-b"><div class="log" id="log"></div></div>
+      </div>
+
+      <div class="note" id="tip">
+        <b>텔레그램이 필요합니다.</b> 레포의 <code>.env</code> 에
+        <code>TG_TOKEN</code> 과 <code>TG_CHAT_ID</code> 를 넣어 두세요.
+        없으면 감시가 바로 멈춥니다.
+      </div>
+      <div class="note bad" hidden id="blocked">
+        <b>CGV 가 접근을 제한했습니다.</b>
+        조회를 멈췄습니다. 평소 브라우저에서 cgv.co.kr 이 열리는지 확인하시고,
+        하루쯤 두었다가 다시 시도하세요. 막힌 상태에서 계속 두드리면 제한이 길어집니다.
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var shows = [];      // 불러온 회차
+  var chosen = {};     // ref -> true
+  var pollTimer = null;
+
+  /* ── 날짜 ── */
+  function ymd(d) {
+    return d.getUTCFullYear() +
+      String(d.getUTCMonth() + 1).padStart(2, "0") +
+      String(d.getUTCDate()).padStart(2, "0");
+  }
+  function kstToday() {
+    var n = new Date(Date.now() + 9 * 3600000);
+    return new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()));
+  }
+  function label(d, i) {
+    var w = ["일", "월", "화", "수", "목", "금", "토"][d.getUTCDay()];
+    var tag = i === 0 ? " · 오늘" : i === 1 ? " · 내일" : "";
+    return (d.getUTCMonth() + 1) + "월 " + d.getUTCDate() + "일(" + w + ")" + tag;
+  }
+
+  (function fillDates() {
+    var base = kstToday();
+    var sel = $("date");
+    for (var i = 0; i < 14; i++) {
+      var d = new Date(base.getTime() + i * 86400000);
+      var o = document.createElement("option");
+      o.value = ymd(d);
+      o.textContent = label(d, i);
+      sel.appendChild(o);
+    }
+  })();
+
+  fetch("/api/theaters").then(function (r) { return r.json(); }).then(function (d) {
+    var sel = $("theater");
+    d.theaters.forEach(function (t) {
+      var o = document.createElement("option");
+      o.value = t.code;
+      o.textContent = t.name + " (" + t.code + ")";
+      sel.appendChild(o);
+    });
+  });
+
+  function theaterCode() {
+    var manual = $("code").value.trim();
+    return /^\d{4}$/.test(manual) ? manual : $("theater").value;
+  }
+  function theaterName() {
+    var manual = $("code").value.trim();
+    if (/^\d{4}$/.test(manual)) return "지점 " + manual;
+    var o = $("theater").selectedOptions[0];
+    return o ? o.textContent.replace(/\s*\(\d{4}\)$/, "") : "";
+  }
+
+  /* ── 불러오기 ── */
+  $("load").addEventListener("click", function () {
+    var btn = $("load");
+    btn.disabled = true;
+    btn.textContent = "부르는 중…";
+    $("blocked").hidden = true;
+
+    fetch("/api/showtimes?theater=" + theaterCode() + "&date=" + $("date").value)
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
+      .then(function (r) {
+        if (!r.ok) {
+          if (r.b.blocked) $("blocked").hidden = false;
+          shows = [];
+          render();
+          $("hint").textContent = r.b.error || "회차를 불러오지 못했습니다.";
+          $("pickNote").hidden = false;
+          return;
+        }
+        shows = r.b.showtimes || [];
+        chosen = {};
+        render();
+      })
+      .catch(function (e) {
+        $("hint").textContent = "불러오기 실패: " + e.message;
+        $("pickNote").hidden = false;
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = "불러오기";
+      });
+  });
+
+  /* ── 그리기 ── */
+  function render() {
+    var list = $("list");
+    list.textContent = "";
+    list.hidden = shows.length === 0;
+    $("quick").hidden = shows.length === 0;
+    $("pickNote").hidden = shows.length === 0;
+
+    var sold = 0;
+    shows.forEach(function (s) {
+      if (s.remainingSeats === 0) sold++;
+      var row = document.createElement("div");
+      row.className = "st" + (s.remainingSeats === 0 ? " sold" : "") + (chosen[s.ref] ? " on" : "");
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!chosen[s.ref];
+      cb.setAttribute("aria-label", s.startTime + " " + s.screenName);
+
+      var t = document.createElement("span");
+      t.className = "t";
+      t.textContent = s.startTime;
+
+      var n = document.createElement("span");
+      n.className = "n";
+      n.textContent = s.remainingSeats === 0 ? "매진" : s.remainingSeats + "/" + s.totalSeats;
+
+      var m = document.createElement("span");
+      m.className = "m";
+      m.textContent = s.screenName + "  ";
+      var i = document.createElement("i");
+      i.textContent = s.movieName;
+      m.appendChild(i);
+
+      row.append(cb, t, n, m);
+      row.addEventListener("click", function (e) {
+        if (e.target !== cb) cb.checked = !cb.checked;
+        if (cb.checked) chosen[s.ref] = true; else delete chosen[s.ref];
+        row.classList.toggle("on", cb.checked);
+        sync();
+      });
+      list.appendChild(row);
+    });
+
+    $("count").textContent = shows.length ? shows.length + "개 · 매진 " + sold : "—";
+    $("hint").textContent = shows.length
+      ? "매진된 회차를 고르는 게 보통입니다. 취소표가 나면 알립니다."
+      : "회차가 없습니다. 날짜를 확인해 주세요.";
+    sync();
+  }
+
+  $("quick").addEventListener("click", function (e) {
+    var how = e.target.getAttribute("data-pick");
+    if (!how) return;
+    chosen = {};
+    shows.forEach(function (s) {
+      if (how === "all") chosen[s.ref] = true;
+      else if (how === "sold" && s.remainingSeats === 0) chosen[s.ref] = true;
+      else if (how === "imax" && /imax/i.test(s.screenName)) chosen[s.ref] = true;
+    });
+    render();
+  });
+
+  /* ── 부담 계산 ── */
+  function sync() {
+    var n = Object.keys(chosen).length;
+    $("stPicked").textContent = n;
+
+    // 요청은 지점 × 날짜로만 늘어난다. 회차를 몇 개 고르든 한 번에 다 온다.
+    var floor = Math.max(30, Number($("floor").value) || 45);
+    var cap = Math.max(floor, Number($("max").value) || 60);
+    $("stReq").innerHTML = Math.round(3600 / cap) + '<small> 회/시간</small>';
+    $("start").disabled = n === 0 || running;
+  }
+  $("floor").addEventListener("input", sync);
+  $("max").addEventListener("input", sync);
+
+  /* ── 시작·중지 ── */
+  var running = false;
+
+  $("start").addEventListener("click", function () {
+    var refs = Object.keys(chosen);
+    var last = shows.filter(function (s) { return chosen[s.ref]; })
+      .map(function (s) { return s.startTime; }).sort().pop();
+
+    $("start").disabled = true;
+    fetch("/api/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        theater: theaterCode(),
+        theaterName: theaterName(),
+        date: $("date").value,
+        refs: refs,
+        pollFloorSec: Number($("floor").value) || 45,
+        maxIntervalSec: Number($("max").value) || 60,
+        lastStart: last
+      })
+    })
+      .then(function (r) { return r.json(); })
+      .then(paint)
+      .catch(function (e) { $("log").textContent += "\n시작 실패: " + e.message; });
+  });
+
+  $("stop").addEventListener("click", function () {
+    fetch("/api/stop", { method: "POST" }).then(function (r) { return r.json(); }).then(paint);
+  });
+
+  function paint(s) {
+    running = s.running;
+    $("state").innerHTML = '<span class="dot' + (s.running ? " live" : "") + '"></span>' +
+      (s.running ? "감시 중" : "멈춤");
+    $("stop").hidden = !s.running;
+    $("start").disabled = s.running || Object.keys(chosen).length === 0;
+    if (s.perHour) $("stReq").innerHTML = s.perHour + '<small> 회/시간</small>';
+
+    var log = $("log");
+    var atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 24;
+    log.textContent = (s.log || []).join("\n");
+    if (atEnd) log.scrollTop = log.scrollHeight;
+
+    if ((s.log || []).some(function (l) { return l.indexOf("이용이 제한") >= 0; })) {
+      $("blocked").hidden = false;
+    }
+  }
+
+  (function tick() {
+    fetch("/api/status").then(function (r) { return r.json(); }).then(paint).catch(function () {});
+    pollTimer = setTimeout(tick, 2000);
+  })();
+})();
+</script>
+</body>
+</html>

@@ -73,6 +73,17 @@ const SKIP_PATH = [
 const INTERESTING = /seat|Seat|atkt|book|Book|scn|Scn|schedule|visitor|Visitor|price|Price/;
 
 async function main() {
+  if (!process.argv.includes('--i-know')) {
+    console.error(`⚠️  탐색기는 예매 흐름을 통째로 훑으며 수십 건을 호출합니다.
+
+    2026-08-10 에 이런 탐색 뒤에 IP 가 차단됐습니다. 계약은 이미
+    src/adapters/cgv/web-api.ts 에 기록해 뒀으니, 다시 돌릴 이유가
+    보통은 없습니다.
+
+    그래도 필요하면:  npm run explore -- --i-know
+`);
+    process.exit(1);
+  }
   mkdirSync(OUT, { recursive: true });
 
   const { chromium } = await import('playwright');

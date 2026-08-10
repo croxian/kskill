@@ -46,6 +46,19 @@ export interface WatchSpec {
    */
   screenPattern?: string;
 
+  /**
+   * 회차를 딱 집어서 보기. `"상영관번호:회차순번"` 형식.
+   *
+   *   ["018:4", "018:5"]   용산 IMAX 4회차와 5회차
+   *
+   * 조건을 넓게 걸면 그 지점·날짜의 회차 수십 개가 다 잡힌다. 요청량은
+   * 같지만 — 한 번 조회에 전 회차가 오므로 — 알림이 쏟아진다. 볼 회차가
+   * 정해져 있으면 이걸로 좁힌다. `npm run pick` 이 채워준다.
+   *
+   * 상영관 번호는 지점마다 다르므로 지점을 하나만 볼 때 쓴다.
+   */
+  showtimes?: string[];
+
   // ── 좌석 조건 ──────────────────────────────────────────────
   block: SeatBlock | null;
   party: PartySpec;
@@ -113,7 +126,15 @@ export function inWindow(startTime: string, windows: TimeWindow[]): boolean {
 }
 
 /** 회차가 스펙의 필터를 통과하는가. 지점·날짜는 조회 단계에서 이미 걸러진다. */
+/** 회차 하나를 가리키는 키. 지점 안에서 고유하다. */
+export function showtimeRef(s: Showtime): string {
+  return `${s.screenId}:${s.playSequence}`;
+}
+
 export function matchesSpec(s: Showtime, spec: WatchSpec): boolean {
+  // 회차를 집어서 골랐으면 그것만 본다. 다른 조건은 볼 필요가 없다.
+  if (spec.showtimes?.length) return spec.showtimes.includes(showtimeRef(s));
+
   if (spec.movies.length > 0 && !spec.movies.includes(s.movieId)) return false;
   if (spec.screens?.length && !spec.screens.includes(s.screenId)) return false;
   if (spec.screenPattern && !new RegExp(spec.screenPattern, 'i').test(s.screenName)) return false;

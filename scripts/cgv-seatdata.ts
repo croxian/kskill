@@ -16,10 +16,26 @@ import { renderSeatMapText } from '../src/notify/render.js';
  *   3. 통로 구획이 그럴듯한가
  *
  * 2번이 어긋나면 감시기에 붙이면 안 된다. 없는 자리를 알리게 된다.
+ *
+ * ⚠️ 2026-08-10, 이 스크립트가 부르는 좌석 API 를 반복 시도하다가 CGV 에
+ * 차단당했다. 감시기는 이 경로를 쓰지 않는다 — 잔여수만 본다.
+ * 그래서 실수로 돌아가면 안 된다. --i-know 를 붙여야만 실행된다.
  */
+
+const CONSENT = `⚠️  이 스크립트는 CGV 좌석 API 를 직접 부릅니다.
+
+    2026-08-10 에 바로 이 경로를 반복 호출하다가 IP 가 차단됐습니다.
+    감시기(npm run watch)는 이 경로를 쓰지 않습니다 — 잔여수만 봅니다.
+
+    그래도 돌리시려면:  npm run cgv:seatdata -- --i-know --theater 0059
+`;
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (!args.iKnow) {
+    console.error(CONSENT);
+    process.exit(1);
+  }
   const theater = args.theater ?? '0059';
   const date = args.date ?? today();
 
@@ -146,6 +162,7 @@ function parseArgs(argv: string[]) {
     date: get('date'),
     screen: get('screen'),
     cust: get('cust'),
+    iKnow: argv.includes('--i-know'),
     map: argv.includes('--map'),
     show: argv.includes('--show'),
   };
