@@ -155,8 +155,13 @@ async function main() {
    * CGV 는 로그인에 캡차가 있어 자동 재로그인이 불가능하다.
    * 세션이 죽으면 사람이 직접 들어가야 하므로, 빨리 알리는 게 전부다.
    * 방문 자체가 세션을 연장하니 확인이 곧 유지이기도 하다.
+   *
+   * **확보 모드에서만 한다.** 알림만 할 때는 로그인이 필요 없는데,
+   * 30분마다 브라우저를 띄워 CGV 를 방문하고 있었다. 알림에 아무 보탬도
+   * 안 되면서 접근만 늘리는 짓이다.
    */
-  const cgvKeeper = chains.includes('cgv') ? new CgvSessionKeeper() : null;
+  const cgvKeeper =
+    chains.includes('cgv') && spec.action === 'hold' ? new CgvSessionKeeper() : null;
   let cgvWarned = false;
 
   async function ensureSession(): Promise<void> {
