@@ -6,10 +6,14 @@ import type { ScreenDump } from '../src/hold/resolve.js';
 /**
  * 탐색 결과를 한 화면에 요약한다.
  *
- *   npx tsx scripts/explore-show.ts
+ *   npx tsx scripts/explore-show.ts                  전체 요약
+ *   npx tsx scripts/explore-show.ts searchIfSeatData 한 엔드포인트만 자세히
  *
  * 덤프 파일이 수십 개가 되면 그대로는 옮기기 어렵다. 셀렉터를 짜는 데
  * 필요한 것만 추려서 붙여넣을 수 있는 크기로 만든다.
+ *
+ * 인자를 주면 그 경로가 들어간 호출의 본문을 편다. 배열은 앞 두 개만 —
+ * 좌석 320개를 다 찍으면 어차피 못 읽는다. 필드 이름을 알아내는 게 목적이다.
  */
 
 const ROOT = 'fixtures/explore';
@@ -50,6 +54,12 @@ function main() {
 
   const screens = files.filter((f) => !f.startsWith('api-'));
   const apis = files.filter((f) => f.startsWith('api-'));
+
+  const want = process.argv[2];
+  if (want) {
+    detailMode(dir, apis, want);
+    return;
+  }
 
   console.log('\n═══ 화면 ═══');
   for (const f of screens) {
@@ -98,6 +108,59 @@ function main() {
   }
 
   console.log(`\n화면 ${screens.length}건 · API ${byKey.size}종 (${apis.length}회 호출)`);
+}
+
+/**
+ * 한 엔드포인트만 펴서 본다.
+ *
+ * 요약으로는 `seats: [320개] …` 까지밖에 안 보인다. 어댑터를 쓰려면
+ * 그 안의 필드 이름을 알아야 한다.
+ */
+function detailMode(dir: string, apis: string[], want: string): void {
+  const hits = apis
+    .map((f) => ({ f, d: read<ApiDump>(dir, f) }))
+    .filter(({ d }) => d && (d.path ?? '').toLowerCase().includes(want.toLowerCase()));
+
+  if (hits.length === 0) {
+    console.log(`'${want}' 이 들어간 호출이 없습니다.`);
+    return;
+  }
+  for (const { f, d } of hits) {
+    if (!d) continue;
+    console.log(`\n▸ ${d.method ?? 'GET'} ${d.host ?? ''}${d.path ?? ''}  (${f})`);
+    if (d.query && Object.keys(d.query).length) {
+      console.log(`  query ${JSON.stringify(d.query)}`);
+    }
+    if (d.postData) console.log(`  body  ${JSON.stringify(d.postData)}`);
+    console.log(sample(d.body, '  '));
+  }
+}
+
+/** 배열은 앞 두 개만 남기고 편다. 나머지는 같은 모양이다. */
+function sample(v: unknown, indent: string): string {
+  const trimmed = trim(v, 0);
+  return JSON.stringify(trimmed, null, 2)
+    .split('\n')
+    .map((l) => indent + l)
+    .join('\n');
+}
+
+function trim(v: unknown, depth: number): unknown {
+  if (depth > 8) return '…';
+  if (Array.isArray(v)) {
+    const head = v.slice(0, 2).map((x) => trim(x, depth + 1));
+    return v.length > 2 ? [...head, `… 총 ${v.length}개`] : head;
+  }
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      out[k] = trim(x, depth + 1);
+    }
+    return out;
+  }
+  // 긴 HTML 안내문 같은 게 섞여 있다. 필드 이름만 알면 되니 잘라낸다.
+  if (typeof v === 'string' && v.length > 80) return `${v.slice(0, 80)}…`;
+  return v;
 }
 
 /**
