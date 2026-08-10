@@ -62,6 +62,8 @@ interface Harness {
   errors: Array<[string, string]>;
   setRows(rows: Showtime[]): void;
   setNow(t: number): void;
+  /** 폴링 사이에 시간을 흘린다. 짝마다 다음 조회 시각이 따로 있다. */
+  tick(ms?: number): void;
 }
 
 function harness(rows: Showtime[] = [showtime()]): Harness {
@@ -80,6 +82,7 @@ function harness(rows: Showtime[] = [showtime()]): Harness {
     fetchSeatMap,
     setRows: (r) => { current = r; },
     setNow: (t) => { now = t; },
+    tick: (ms = 60_000) => { now += ms; },
     deps: {
       listShowtimes,
       fetchSeatMap,
@@ -90,12 +93,24 @@ function harness(rows: Showtime[] = [showtime()]): Harness {
   };
 }
 
+/**
+ * 한 번의 폴링.
+ *
+ * 감시기는 지점·날짜 짝마다 다음 조회 시각을 따로 잡는다. 시계를 멈춰두고
+ * 두 번 부르면 두 번째에는 아무것도 조회하지 않는다 — 실제로도 그렇게
+ * 동작해야 맞다. 그래서 폴링 사이에 시간을 흘린다.
+ */
+async function poll(w: Watcher, h: Harness) {
+  h.tick();
+  return w.runOnce();
+}
+
 describe('Watcher — 첫 관측', () => {
   it('시작하자마자 현재 빈자리를 알려준다', async () => {
     const h = harness();
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.alerts).toHaveLength(1);
     expect(res.alerts[0]!.candidate!.seats.map((s) => `${s.row}${s.col}`)).toEqual(['J10', 'J11']);
@@ -105,7 +120,7 @@ describe('Watcher — 첫 관측', () => {
     const h = harness();
     const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline' });
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.alerts).toHaveLength(0);
     expect(h.fetchSeatMap).not.toHaveBeenCalled();
@@ -117,8 +132,8 @@ describe('Watcher — 변화 감지', () => {
     const h = harness();
     const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline' });
 
-    await w.runOnce();
-    const res = await w.runOnce();
+    await poll(w, h);
+    const res = await poll(w, h);
 
     expect(res.targets).toBe(0);
     expect(h.fetchSeatMap).not.toHaveBeenCalled();
@@ -128,9 +143,9 @@ describe('Watcher — 변화 감지', () => {
     const h = harness([showtime({ remainingSeats: 4 })]);
     const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline' });
 
-    await w.runOnce();
+    await poll(w, h);
     h.setRows([showtime({ remainingSeats: 6 })]); // 취소표 발생
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.targets).toBe(1);
     expect(res.alerts).toHaveLength(1);
@@ -140,9 +155,9 @@ describe('Watcher — 변화 감지', () => {
     const h = harness([showtime({ remainingSeats: 6 })]);
     const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline' });
 
-    await w.runOnce();
+    await poll(w, h);
     h.setRows([showtime({ remainingSeats: 2 })]);
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.targets).toBe(0);
   });
@@ -151,7 +166,7 @@ describe('Watcher — 변화 감지', () => {
     const h = harness([showtime({ remainingSeats: 0 })]);
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.targets).toBe(0);
     expect(h.fetchSeatMap).not.toHaveBeenCalled();
@@ -167,7 +182,7 @@ describe('Watcher — 구역 합치기', () => {
     ]);
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.polled).toBe(1);
     expect(h.fetchSeatMap).toHaveBeenCalledTimes(1);
@@ -179,12 +194,12 @@ describe('Watcher — 중복 억제', () => {
     const h = harness([showtime({ remainingSeats: 4 })]);
     const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline', cooldownMs: 180_000 });
 
-    await w.runOnce();
+    await poll(w, h);
     h.setRows([showtime({ remainingSeats: 6 })]);
-    const first = await w.runOnce();
+    const first = await poll(w, h);
 
     h.setRows([showtime({ remainingSeats: 8 })]); // 또 늘었지만 좌석은 그대로
-    const second = await w.runOnce();
+    const second = await poll(w, h);
 
     expect(first.alerts).toHaveLength(1);
     expect(second.targets).toBe(1); // 2단까지는 갔지만
@@ -195,13 +210,13 @@ describe('Watcher — 중복 억제', () => {
     const h = harness([showtime({ remainingSeats: 4 })]);
     const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline', cooldownMs: 60_000 });
 
-    await w.runOnce();
+    await poll(w, h);
     h.setRows([showtime({ remainingSeats: 6 })]);
-    await w.runOnce();
+    await poll(w, h);
 
     h.setNow(NOW + 120_000);
     h.setRows([showtime({ remainingSeats: 8 })]);
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.alerts).toHaveLength(1);
   });
@@ -213,7 +228,7 @@ describe('Watcher — 실패와 종료', () => {
     h.listShowtimes.mockRejectedValueOnce(new Error('HTTP 500'));
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(h.errors).toEqual([['1단', 'theater[0] 20260809']]);
     expect(res.polled).toBe(0);
@@ -228,7 +243,7 @@ describe('Watcher — 실패와 종료', () => {
     h.listShowtimes.mockRejectedValue(new Error('HTTP 403'));
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.offline).toBe(true);
     expect(res.polled).toBe(0);
@@ -239,7 +254,7 @@ describe('Watcher — 실패와 종료', () => {
     const h = harness([]);
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.offline).toBe(false);
     expect(res.nextWakeMs).toBe(STOP);
@@ -251,7 +266,7 @@ describe('Watcher — 실패와 종료', () => {
     h.setNow(Date.parse('2026-08-11T00:00:00Z'));
     const w = new Watcher(SPEC, h.deps);
 
-    expect((await w.runOnce()).nextWakeMs).toBe(STOP);
+    expect((await poll(w, h)).nextWakeMs).toBe(STOP);
   });
 
   it('좌석맵 조회가 깨지면 그 회차만 건너뛴다', async () => {
@@ -259,7 +274,7 @@ describe('Watcher — 실패와 종료', () => {
     h.fetchSeatMap.mockRejectedValueOnce(new Error('timeout'));
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(h.errors[0]![0]).toBe('2단');
     expect(res.alerts).toHaveLength(0);
@@ -270,7 +285,7 @@ describe('Watcher — 실패와 종료', () => {
     h.setNow(Date.parse('2026-08-09T09:50:00Z')); // 상영 20분 전
     const w = new Watcher(SPEC, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.polled).toBe(0);
     expect(res.nextWakeMs).toBe(STOP);
@@ -282,7 +297,7 @@ describe('Watcher — 실패와 종료', () => {
     const w = new Watcher(SPEC, h.deps);
 
     expect(w.expired).toBe(true);
-    expect((await w.runOnce()).nextWakeMs).toBe(STOP);
+    expect((await poll(w, h)).nextWakeMs).toBe(STOP);
   });
 });
 
@@ -302,7 +317,7 @@ describe('Watcher — 알림 상한', () => {
     const h = many();
     const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.alerts).toHaveLength(3);
     expect(res.suppressed).toBe(9);
@@ -312,7 +327,7 @@ describe('Watcher — 알림 상한', () => {
     const h = many();
     const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
 
-    await w.runOnce();
+    await poll(w, h);
 
     expect(h.fetchSeatMap).toHaveBeenCalledTimes(3);
   });
@@ -328,12 +343,12 @@ describe('Watcher — 알림 상한', () => {
     const h = harness(rows);
     const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps, { coldStart: 'baseline' });
 
-    await w.runOnce(); // 기준만 잡는다
+    await poll(w, h); // 기준만 잡는다
     h.setRows(rows.map((r) => ({ ...r, remainingSeats: 6 }))); // 전 회차에 취소표
-    const first = await w.runOnce();
+    const first = await poll(w, h);
 
     h.setNow(NOW + 60_000);
-    const second = await w.runOnce();
+    const second = await poll(w, h);
 
     expect(first.alerts).toHaveLength(3);
     expect(first.suppressed).toBe(9);
@@ -351,9 +366,9 @@ describe('Watcher — 알림 상한', () => {
     const h = many();
     const w = new Watcher({ ...SPEC, maxAlertsPerRun: 3 }, h.deps);
 
-    const first = await w.runOnce();
+    const first = await poll(w, h);
     h.setNow(NOW + 60_000);
-    const second = await w.runOnce();
+    const second = await poll(w, h);
 
     expect(first.alerts).toHaveLength(3);
     expect(first.suppressed).toBe(9);
@@ -364,7 +379,7 @@ describe('Watcher — 알림 상한', () => {
     const h = many();
     const w = new Watcher(SPEC, h.deps);
 
-    expect((await w.runOnce()).alerts).toHaveLength(5);
+    expect((await poll(w, h)).alerts).toHaveLength(5);
   });
 });
 
@@ -377,7 +392,7 @@ describe('Watcher — 좌석 확보 모드', () => {
     ]);
     const w = new Watcher({ ...SPEC, action: 'hold' }, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.targets).toBe(2);
     expect(res.alerts).toHaveLength(1);
@@ -390,8 +405,71 @@ describe('Watcher — 좌석 확보 모드', () => {
     ]);
     const w = new Watcher({ ...SPEC, action: 'notify' }, h.deps);
 
-    const res = await w.runOnce();
+    const res = await poll(w, h);
 
     expect(res.alerts).toHaveLength(2);
+  });
+});
+
+/**
+ * 요청량은 회차 수가 아니라 지점 × 날짜 로 늘어난다. 한 번 조회하면
+ * 그 지점·그 날짜의 전 회차가 오기 때문이다 (CGV 실측 40개).
+ *
+ * 그래서 감시 회차를 늘리는 건 공짜지만, 날짜를 늘리는 건 아니다.
+ */
+describe('Watcher — 요청량', () => {
+  const FIVE_DATES: WatchSpec = {
+    ...SPEC,
+    dates: ['20260809', '20260810', '20260811', '20260812', '20260813'],
+  };
+
+  it('회차가 몇 개든 지점·날짜당 한 번만 조회한다', async () => {
+    const many = Array.from({ length: 40 }, (_, i) =>
+      showtime({ playSequence: String(i + 1), startTime: '19:10' }),
+    );
+    const h = harness(many);
+    const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline' });
+
+    const res = await poll(w, h);
+
+    expect(res.requests).toBe(1);
+    expect(h.listShowtimes).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 예전에는 전체에서 가장 급한 회차가 깨우는 간격을 정했고, 깨어나면
+   * 모든 짝을 조회했다. 오늘 저녁 회차 하나 때문에 닷새 뒤 날짜까지
+   * 45초마다 두드렸다.
+   */
+  it('급하지 않은 날짜는 매번 조회하지 않는다', async () => {
+    const h = harness();
+    // 오늘 회차는 2시간 뒤(급함), 나머지 날짜는 며칠 뒤라 회차가 없다고 본다
+    h.listShowtimes.mockImplementation(async (_idx: number, date: string) =>
+      date === '20260809' ? [showtime()] : [showtime({ playDate: date, startTime: '19:10' })],
+    );
+    const w = new Watcher(FIVE_DATES, h.deps, { coldStart: 'baseline' });
+
+    const first = await poll(w, h);
+    expect(first.requests).toBe(5); // 처음에는 다 본다
+
+    h.listShowtimes.mockClear();
+    h.tick(60_000); // 1분 뒤
+    const second = await w.runOnce();
+
+    // 오늘 것만 다시 본다. 며칠 뒤 날짜는 아직 잘 시간이다.
+    expect(second.requests).toBe(1);
+    expect(h.listShowtimes).toHaveBeenCalledWith(0, '20260809');
+  });
+
+  it('남은 회차가 없는 날짜는 다시 조회하지 않는다', async () => {
+    const h = harness([]);
+    const w = new Watcher(SPEC, h.deps, { coldStart: 'baseline' });
+
+    await poll(w, h);
+    h.listShowtimes.mockClear();
+    const second = await poll(w, h);
+
+    expect(second.requests).toBe(0);
+    expect(second.nextWakeMs).toBe(STOP);
   });
 });

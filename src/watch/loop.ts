@@ -49,6 +49,8 @@ export interface WatchDeps {
 
 export interface RunResult {
   polled: number;
+  /** 이번에 실제로 나간 요청 수. 얼마나 부담을 주고 있는지 볼 수 있어야 한다. */
+  requests: number;
   /** 잔여석이 늘어 2단으로 넘어간 회차 수 */
   targets: number;
   alerts: Alert[];
@@ -73,6 +75,22 @@ export class Watcher {
    */
   private pending = new Set<string>();
 
+  /**
+   * 지점·날짜 짝마다 따로 잡는 다음 조회 시각.
+   *
+   * 처음에는 매 주기에 모든 짝을 한꺼번에 조회했다. 그런데 깨어나는 간격은
+   * **전체에서 가장 급한 회차**가 정한다. 오늘 저녁 회차 하나 때문에 닷새 뒤
+   * 날짜까지 45초마다 조회했다 — 지점 2 × 날짜 5 면 시간당 800회다.
+   *
+   * 짝마다 제 사정에 맞춰 재운다. 닷새 뒤는 30분에 한 번이면 충분하고,
+   * 오늘 저녁은 45초마다 본다. 놓치는 것 없이 요청만 줄어든다.
+   */
+  private nextPollAt = new Map<string, number>();
+  /** 이번에 조회하지 않은 짝의 직전 결과. 변화 판정에는 전체 그림이 필요하다. */
+  private seen = new Map<string, Showtime[]>();
+  /** 남은 회차가 없어 더 볼 이유가 없는 짝. */
+  private done = new Set<string>();
+
   constructor(
     spec: WatchSpec,
     private readonly deps: WatchDeps,
@@ -91,22 +109,33 @@ export class Watcher {
     const now = this.deps.now();
     const spec = this.spec;
 
-    // ── 1단: 카운트만 훑는다 ────────────────────────────────
-    const all: Showtime[] = [];
-    let attempts = 0;
+    // ── 1단: 이번에 볼 짝만 훑는다 ──────────────────────────
+    const due = this.duePairs(now);
     let failures = 0;
-    for (let i = 0; i < spec.theaters.length; i++) {
-      for (const date of spec.dates) {
-        attempts++;
-        try {
-          all.push(...(await this.deps.listShowtimes(i, date)));
-        } catch (err) {
-          failures++;
-          this.deps.onError?.('1단', err, `theater[${i}] ${date}`);
+    for (const p of due) {
+      try {
+        const got = await this.deps.listShowtimes(p.idx, p.date);
+        this.seen.set(p.key, got);
+
+        const wait = this.pairInterval(got, now);
+        if (wait === STOP) {
+          // 이 날짜에 남은 회차가 없다. 다시 볼 이유가 없다.
+          this.done.add(p.key);
+          this.seen.delete(p.key);
+        } else {
+          this.nextPollAt.set(p.key, now + wait);
         }
+      } catch (err) {
+        failures++;
+        this.deps.onError?.('1단', err, `theater[${p.idx}] ${p.date}`);
+        // 실패한 짝도 곧 다시 본다. 다만 하한보다 촘촘하게는 안 본다.
+        this.nextPollAt.set(p.key, now + Math.max(spec.pollFloorSec, 60) * 1000);
       }
     }
-    const offline = attempts > 0 && failures === attempts;
+    const offline = due.length > 0 && failures === due.length;
+
+    // 이번에 안 본 짝은 직전 결과를 그대로 쓴다. 변하지 않았으니 알림도 없다.
+    const all = [...this.seen.values()].flat();
 
     const live = collapseDivisions(all)
       .filter((s) => matchesSpec(s, spec))
@@ -190,8 +219,35 @@ export class Watcher {
       alerts,
       suppressed,
       offline,
-      nextWakeMs: this.nextWake(live, now, offline),
+      requests: due.length,
+      nextWakeMs: this.nextWake(now, offline),
     };
+  }
+
+  /** 지금 봐야 할 지점·날짜 짝. */
+  private duePairs(now: number): { idx: number; date: string; key: string }[] {
+    const out: { idx: number; date: string; key: string }[] = [];
+    for (let idx = 0; idx < this.spec.theaters.length; idx++) {
+      for (const date of this.spec.dates) {
+        const key = `${idx}:${date}`;
+        if (this.done.has(key)) continue;
+        if ((this.nextPollAt.get(key) ?? 0) <= now) out.push({ idx, date, key });
+      }
+    }
+    return out;
+  }
+
+  /** 이 짝을 다음에 언제 볼 것인가. 그 안에서 가장 급한 회차가 정한다. */
+  private pairInterval(showtimes: Showtime[], now: number): number {
+    const mine = collapseDivisions(showtimes).filter((s) => matchesSpec(s, this.spec));
+    return nextWakeMs(
+      mine.map((s) => ({
+        showAt: showtimeAt(s.playDate, s.startTime),
+        ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
+      })),
+      now,
+      { floorSec: this.spec.pollFloorSec, stopBeforeMin: this.spec.stopBeforeMin },
+    );
   }
 
   /**
@@ -200,17 +256,21 @@ export class Watcher {
    * 둘 다 회차 목록이 비어 있지만, 전자에서 STOP 을 돌려주면
    * 잠깐의 네트워크 장애로 감시가 조용히 끝나버린다.
    */
-  private nextWake(live: Showtime[], now: number, offline: boolean): number {
+  private nextWake(now: number, offline: boolean): number {
     if (this.expired) return STOP;
     if (offline) return Math.max(this.spec.pollFloorSec, 60) * 1000;
-    return nextWakeMs(
-      live.map((s) => ({
-        showAt: showtimeAt(s.playDate, s.startTime),
-        ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
-      })),
-      now,
-      { floorSec: this.spec.pollFloorSec, stopBeforeMin: this.spec.stopBeforeMin },
-    );
+
+    // 가장 먼저 깨어날 짝에 맞춘다. 아무 짝도 안 남았으면 끝난 것이다.
+    const pending: number[] = [];
+    for (let idx = 0; idx < this.spec.theaters.length; idx++) {
+      for (const date of this.spec.dates) {
+        const key = `${idx}:${date}`;
+        if (this.done.has(key)) continue;
+        pending.push(this.nextPollAt.get(key) ?? now);
+      }
+    }
+    if (pending.length === 0) return STOP;
+    return Math.max(1000, Math.min(...pending) - now);
   }
 
   /**
