@@ -626,3 +626,59 @@ describe('Watcher — 첫 관측은 기준점', () => {
     expect(res.alerts[0]!.increase).toBe(2);
   });
 });
+
+/**
+ * 예산은 우리가 정한 천장일 뿐 서버가 동의한 값이 아니다.
+ * 429·403 이 돌아오면 같은 속도로 계속 두드려서는 안 된다.
+ */
+describe('Watcher — 밀리면 물러선다', () => {
+  const budgeted: WatchSpec = { ...SPEC, maxRequestsPerHour: 120, pollFloorSec: 10 };
+
+  it('밀어내는 응답을 만나면 간격을 늘린다', async () => {
+    const h = harness();
+    const steps: number[] = [];
+    const w = new Watcher(
+      budgeted,
+      { ...h.deps, onBackoff: (n) => steps.push(n) },
+      { coldStart: 'baseline' },
+    );
+
+    expect(w.floorSec()).toBe(30); // 1짝 · 120회/시
+    h.listShowtimes.mockRejectedValue(new Error('CGV HTTP 429'));
+    const res = await poll(w, h);
+
+    expect(steps).toEqual([1]);
+    expect(w.floorSec()).toBe(60);
+    expect(res.backoffSteps).toBe(1);
+  });
+
+  it('평범한 고장에는 물러서지 않는다', async () => {
+    const h = harness();
+    const w = new Watcher(budgeted, h.deps, { coldStart: 'baseline' });
+
+    h.listShowtimes.mockRejectedValue(new Error('socket hang up'));
+    await poll(w, h);
+
+    expect(w.floorSec()).toBe(30);
+  });
+
+  it('조용해지면 천천히 돌아온다', async () => {
+    const h = harness();
+    const w = new Watcher(budgeted, h.deps, { coldStart: 'baseline' });
+
+    h.listShowtimes.mockRejectedValue(new Error('CGV HTTP 429'));
+    await poll(w, h);
+    expect(w.floorSec()).toBe(60);
+
+    // 조회를 실제로 해야 조용했다고 셀 수 있다. 물러선 간격만큼 시간을 흘린다.
+    h.listShowtimes.mockResolvedValue([showtime()]);
+    for (let i = 0; i < 4; i++) {
+      h.tick(120_000);
+      await w.runOnce();
+      expect(w.floorSec()).toBe(60); // 아직 돌아오지 않는다
+    }
+    h.tick(120_000);
+    await w.runOnce();
+    expect(w.floorSec()).toBe(30); // 다섯 번 조용해야 한 단
+  });
+});

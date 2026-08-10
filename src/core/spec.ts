@@ -126,8 +126,12 @@ export interface WatchSpec {
  *
  * 총량 예산이 주된 안전장치지만 하한도 남긴다. 초 단위로 두드리면 총량과
  * 무관하게 순간 요청률이 튀고, 그건 엣지가 창 단위로 보는 값이다.
+ *
+ * 5초까지 내리자는 얘기가 있었는데 안 내렸다. 짝 하나를 5초마다 보면
+ * 720회/시인데, 2026-08-10 에 차단당했을 때가 800회/시였다. 추측이 아니라
+ * 실측이 있는 구간이라 굳이 밟을 이유가 없다. 10초면 360회/시로 그 절반이다.
  */
-export const POLL_FLOOR_SEC = 15;
+export const POLL_FLOOR_SEC = 10;
 
 /** 하한을 강제하고 빠진 값을 채운다. 스펙을 만드는 모든 경로가 이걸 통과해야 한다. */
 export function normalizeSpec(spec: WatchSpec): WatchSpec {

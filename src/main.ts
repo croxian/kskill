@@ -73,6 +73,13 @@ async function main() {
     notify: tg.notify,
     now: () => Date.now(),
     onError: (stage, err, ctx) => log(`${stage} 실패 [${ctx}] ${msg(err)}`),
+    // 조용히 느려지면 사람이 고장으로 오해한다. 물러선 사실을 말한다.
+    onBackoff: (steps, everySec) =>
+      log(
+        steps === 0
+          ? `속도를 원래대로 되돌립니다 (${everySec}초마다)`
+          : `⚠ CGV 가 밀어냅니다 — ${steps}단 물러섭니다 (${everySec}초마다)`,
+      ),
   });
 
   // 동시 홀드는 1건뿐이므로 진행 중인 알림 하나만 들고 있으면 된다.
@@ -215,6 +222,7 @@ async function main() {
       // 요청 수를 매번 보여준다. 얼마나 부담을 주고 있는지 모르면 조절할 수 없다.
       const parts = [
         `요청 ${res.requests}`,
+        ...(res.backoffSteps > 0 ? [`물러섬 ${res.backoffSteps}단`] : []),
         `회차 ${res.polled}`,
         `변화 ${res.targets}`,
         `알림 ${res.alerts.length}`,

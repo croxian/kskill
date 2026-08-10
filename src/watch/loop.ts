@@ -12,6 +12,7 @@ import {
   type Snapshot,
 } from '../core/diff.js';
 import { intervalMs, nextWakeMs, STOP } from '../core/poll.js';
+import { Backoff, isThrottled } from '../core/throttle.js';
 import { matchesSpec, normalizeSpec, showtimeAt, type WatchSpec } from '../core/spec.js';
 
 /**
@@ -48,6 +49,8 @@ export interface WatchDeps {
   now(): number;
   /** 조회 실패를 삼키지 않고 밖으로 알린다. */
   onError?(stage: '1단' | '2단', err: unknown, ctx: string): void;
+  /** 물러서거나 돌아왔다. 조용히 느려지면 사람이 고장으로 오해한다. */
+  onBackoff?(steps: number, everySec: number): void;
 }
 
 export interface RunResult {
@@ -63,6 +66,8 @@ export interface RunResult {
   nextWakeMs: number;
   /** 1단 조회가 전부 실패했다. 회차가 없는 것과 구분해야 한다. */
   offline: boolean;
+  /** 밀려서 물러선 단계. 0 이면 설정한 속도 그대로. */
+  backoffSteps: number;
 }
 
 export class Watcher {
@@ -95,6 +100,14 @@ export class Watcher {
   private seen = new Map<string, Showtime[]>();
   /** 남은 회차가 없어 더 볼 이유가 없는 짝. */
   private done = new Set<string>();
+  /**
+   * 서버가 밀어내면 물러선다.
+   *
+   * 예산은 우리가 정한 천장일 뿐 서버가 동의한 값이 아니다. 429·403 이
+   * 돌아오면 그건 "지금 그 속도는 안 된다" 는 뜻이고, 같은 속도로 계속
+   * 두드리면 단단한 차단이 된다.
+   */
+  private readonly backoff = new Backoff();
 
   constructor(
     spec: WatchSpec,
@@ -135,11 +148,20 @@ export class Watcher {
       } catch (err) {
         failures++;
         this.deps.onError?.('1단', err, `theater[${p.idx}] ${p.date}`);
-        // 실패한 짝도 곧 다시 본다. 다만 하한보다 촘촘하게는 안 본다.
+        // 밀린 것이면 전체 속도를 늦춘다. 이 짝만 늦춰봐야 소용없다 —
+        // 서버가 보는 것은 우리 IP 의 총량이다.
+        if (isThrottled(err) && this.backoff.trip()) {
+          this.deps.onBackoff?.(this.backoff.steps, this.floorSec());
+        }
         this.nextPollAt.set(p.key, now + Math.max(this.floorSec(), 60) * 1000);
       }
     }
     const offline = due.length > 0 && failures === due.length;
+    // 한 바퀴를 무사히 돌면 천천히 돌아온다. 한 번 성공했다고 바로 뛰면
+    // 밀리고 돌아오기를 반복하면서 평균적으로는 계속 두드리는 꼴이 된다.
+    if (due.length > 0 && failures === 0 && this.backoff.ease()) {
+      this.deps.onBackoff?.(this.backoff.steps, this.floorSec());
+    }
 
     // 이번에 안 본 짝은 직전 결과를 그대로 쓴다. 변하지 않았으니 알림도 없다.
     const all = [...this.seen.values()].flat();
@@ -246,6 +268,7 @@ export class Watcher {
       suppressed,
       offline,
       requests: due.length,
+      backoffSteps: this.backoff.steps,
       nextWakeMs: this.nextWake(now, offline),
     };
   }
@@ -295,9 +318,11 @@ export class Watcher {
    */
   floorSec(): number {
     const budget = this.spec.maxRequestsPerHour;
-    if (!budget) return this.spec.pollFloorSec;
-    const pairs = Math.max(1, this.livePairs());
-    return Math.max(this.spec.pollFloorSec, Math.ceil((pairs * 3600) / budget));
+    const base = budget
+      ? Math.max(this.spec.pollFloorSec, Math.ceil((Math.max(1, this.livePairs()) * 3600) / budget))
+      : this.spec.pollFloorSec;
+    // 밀린 만큼 늘린다. 하한은 우리가 정한 값이지 서버가 동의한 값이 아니다.
+    return Math.ceil(base * this.backoff.multiplier);
   }
 
   /** 아직 볼 것이 남은 지점·날짜 짝의 수. 끝난 날짜는 예산을 안 쓴다. */

@@ -238,6 +238,11 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
         <code>TG_TOKEN</code> 과 <code>TG_CHAT_ID</code> 를 넣어 두세요.
         없으면 감시가 바로 멈춥니다.
       </div>
+      <div class="note" hidden id="backoff">
+        <b>CGV 가 밀어내서 속도를 낮췄습니다.</b>
+        429·403 이 돌아왔다는 뜻입니다. 조용해지면 천천히 원래대로 돌아옵니다.
+        계속 뜨면 예산을 낮추세요 — 같은 속도로 두드리면 차단으로 이어집니다.
+      </div>
       <div class="note bad" hidden id="blocked">
         <b>CGV 가 접근을 제한했습니다.</b>
         조회를 멈췄습니다. 평소 브라우저에서 cgv.co.kr 이 열리는지 확인하시고,
@@ -436,7 +441,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
       sites + "지점을 " + every + "초마다 봅니다. 지점을 늘리면 그만큼 성기게 " +
       "보고 총량은 그대로입니다." +
       (budget > 300
-        ? " <b>차단당했던 날이 800회/시였습니다.</b>"
+        ? " <b>차단당했던 날이 800회/시였습니다.</b> 이 근처는 피하세요."
         : budget < 60
           ? " 느슨합니다 — 초 단위로 사라지는 자리는 대부분 놓칩니다."
           : "");
@@ -497,9 +502,17 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
     log.textContent = (s.log || []).join("\n");
     if (atEnd) log.scrollTop = log.scrollHeight;
 
-    if ((s.log || []).some(function (l) { return l.indexOf("이용이 제한") >= 0; })) {
+    var lines = s.log || [];
+    if (lines.some(function (l) { return l.indexOf("이용이 제한") >= 0; })) {
       $("blocked").hidden = false;
     }
+    // 물러선 상태는 로그 마지막 상태로 판단한다. 되돌아왔으면 배너를 내린다.
+    var lastBack = null;
+    lines.forEach(function (l) {
+      if (l.indexOf("물러섭니다") >= 0) lastBack = true;
+      else if (l.indexOf("원래대로 되돌립니다") >= 0) lastBack = false;
+    });
+    if (lastBack !== null) $("backoff").hidden = !lastBack;
   }
 
   (function tick() {
