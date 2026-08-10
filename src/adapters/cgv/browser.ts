@@ -106,7 +106,7 @@ export class CgvBrowserClient {
     }, url);
 
     if (res.status < 200 || res.status >= 300) {
-      throw new Error(`CGV HTTP ${res.status}: ${path}\n  ${res.text.slice(0, 200)}`);
+      throw new Error(`CGV HTTP ${res.status}: ${path}\n  ${readable(res.text)}`);
     }
     try {
       return JSON.parse(res.text) as unknown;
@@ -159,4 +159,21 @@ export class CgvBrowserClient {
     })) as { data?: unknown };
     return Array.isArray(res.data) ? (res.data as CgvScnItem[]) : [];
   }
+}
+
+/**
+ * 차단 화면에서 사람이 읽을 부분만 뽑는다.
+ *
+ * 그냥 앞 200자를 자르면 <style> 안의 CSS 만 나온다. 실제로 그랬고,
+ * 차단인지 로그인 만료인지 구분할 수 없었다.
+ */
+export function readable(html: string): string {
+  if (!html.includes('<')) return html.slice(0, 200);
+  const text = html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z]+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.slice(0, 300) || '(읽을 수 있는 글자가 없습니다)';
 }

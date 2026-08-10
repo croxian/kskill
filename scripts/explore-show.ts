@@ -21,7 +21,11 @@ const ROOT = 'fixtures/explore';
 /** 예매 흐름일 가능성이 큰 경로. 이것만 자세히 편다. */
 const INTERESTING = /seat|atkt|book|scn|schedule|visitor|price|ticket/i;
 
+/** 브라우저가 늘 붙이는 것들. 흉내 낼 필요가 없어 눈만 어지럽힌다. */
+const BORING = /^(accept-encoding|accept-language|sec-ch-ua|sec-fetch|priority|dnt|upgrade-)/i;
+
 interface ApiDump {
+  headers?: Record<string, string>;
   host?: string;
   method?: string;
   path?: string;
@@ -132,6 +136,15 @@ function detailMode(dir: string, apis: string[], want: string): void {
       console.log(`  query ${JSON.stringify(d.query)}`);
     }
     if (d.postData) console.log(`  body  ${JSON.stringify(d.postData)}`);
+    // 우리가 흉내 내야 하는 것이 여기 있다. 403 이 날 때 무엇이 빠졌는지는
+    // 진짜 요청의 헤더와 견주는 것 말고는 알 방법이 없다.
+    if (d.headers) {
+      console.log('  headers');
+      for (const [k, v] of Object.entries(d.headers)) {
+        if (BORING.test(k)) continue;
+        console.log(`    ${k}: ${clip(v, 120)}`);
+      }
+    }
     console.log(sample(d.body, '  '));
   }
 }
