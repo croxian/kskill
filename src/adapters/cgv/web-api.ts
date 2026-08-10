@@ -13,7 +13,10 @@
  */
 
 export const CGV_WEB = {
-  BASE_URL: 'https://cgv.co.kr/api/v1',
+  /** 페이지를 여기 올려둔 뒤 그 안에서 fetch 한다. 같은 출처여야 한다. */
+  SITE_URL: 'https://cgv.co.kr',
+  /** 페이지 안에서 쓸 상대 경로 접두어. */
+  PATH_PREFIX: '/api/v1',
   COMPANY_CODE: 'A420',
 
   /**

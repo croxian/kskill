@@ -1,4 +1,4 @@
-import type { BrowserContext } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
 
 import { CGV, type CgvScnItem } from './api.js';
 import { signedHeaders } from './client.js';
@@ -83,30 +83,53 @@ export class CgvBrowserClient {
    * cgv.co.kr/api/v1 쪽 호출.
    *
    * api.cgv.co.kr 과 달리 서명이 없다. 웹앱이 자기 출처로 부르는 REST 라
-   * 세션 쿠키만 있으면 된다 — 그 쿠키는 이 브라우저 프로필에 들어 있다.
-   * 서명 헤더를 붙이면 오히려 Origin 이 어긋나므로 붙이지 않는다.
+   * 세션 쿠키만 있으면 된다.
+   *
+   * **주소로 이동하면 403 이다.** api.cgv.co.kr 에서 쓰던 수법인데 여기서는
+   * 통하지 않는다. 최상위 이동은 Sec-Fetch-Dest: document 로 나가고 Referer
+   * 가 없어서, 서버가 보기에 사람이 주소창에 API 주소를 친 것과 같다.
+   *
+   * 대신 페이지 안에서 fetch 한다. 여기는 같은 출처라 CORS 가 없고 —
+   * api.cgv.co.kr 때 페이지 안 fetch 를 못 쓴 이유가 그거였다 — 쿠키도
+   * Referer 도 Sec-Fetch-* 도 브라우저가 알아서 진짜와 똑같이 붙인다.
    */
   async getWeb(path: string, params: Record<string, string>): Promise<unknown> {
-    const ctx = await this.context();
-    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    const page = await this.onSite();
+    const url = `${CGV_WEB.PATH_PREFIX}${path}?${new URLSearchParams(params).toString()}`;
 
-    // 앞선 api.cgv.co.kr 호출이 남긴 서명 헤더를 지운다.
-    await ctx.setExtraHTTPHeaders({});
+    const res = await page.evaluate(async (u: string) => {
+      const r = await fetch(u, {
+        credentials: 'include',
+        headers: { accept: 'application/json, text/plain, */*' },
+      });
+      return { status: r.status, text: await r.text() };
+    }, url);
 
-    const url = `${CGV_WEB.BASE_URL}${path}?${new URLSearchParams(params).toString()}`;
-    const res = await page.goto(url, { waitUntil: 'domcontentloaded' });
-    if (!res) throw new Error(`CGV 응답 없음: ${path}`);
-    if (!res.ok()) throw new Error(`CGV HTTP ${res.status()}: ${path}`);
-
-    const text = await res.text();
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`CGV HTTP ${res.status}: ${path}\n  ${res.text.slice(0, 200)}`);
+    }
     try {
-      return JSON.parse(text) as unknown;
+      return JSON.parse(res.text) as unknown;
     } catch {
       // 로그인이 풀리면 JSON 대신 로그인 화면 HTML 이 온다.
       throw new Error(
-        text.includes('<') ? `CGV 가 JSON 대신 화면을 보냈습니다 (로그인 만료?): ${path}` : `CGV 응답 파싱 실패: ${path}`,
+        res.text.includes('<')
+          ? `CGV 가 JSON 대신 화면을 보냈습니다 (로그인 만료?): ${path}`
+          : `CGV 응답 파싱 실패: ${path}`,
       );
     }
+  }
+
+  /** 페이지를 cgv.co.kr 에 올려둔다. 같은 출처여야 fetch 가 진짜처럼 나간다. */
+  private async onSite(): Promise<Page> {
+    const ctx = await this.context();
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    // 앞선 api.cgv.co.kr 호출이 남긴 서명 헤더를 지운다. 여기서는 방해만 된다.
+    await ctx.setExtraHTTPHeaders({});
+    if (!page.url().startsWith(CGV_WEB.SITE_URL)) {
+      await page.goto(CGV_WEB.SITE_URL, { waitUntil: 'domcontentloaded' });
+    }
+    return page;
   }
 
   /** 한 회차의 좌석맵. custNo 는 계정 식별자라 넣지 않아도 되는지 실측으로 확인한다. */
