@@ -57,11 +57,25 @@ export function snapshot(showtimes: Showtime[]): Snapshot {
  * 줄어든 건 남이 예매한 것이라 관심 없다. 처음 보는 회차도 통과시키지 않는다 —
  * 감시를 막 시작했을 때 전 회차가 한꺼번에 터지는 걸 막는다.
  * 첫 관측에서 현재 상태를 알고 싶으면 호출부에서 coldStart 로 처리한다.
+ *
+ * minIncrease 는 좌석맵을 못 보는 체인에서 단석·연석을 흉내 내는 수단이다.
+ * 한 번에 2석이 풀렸다면 둘이 같이 취소했을 가능성이 크고, 그러면 붙어 있을
+ * 가능성도 크다. **보장은 아니다** — 서로 다른 자리 둘이 우연히 같은 주기에
+ * 풀렸을 수도 있다. 좌석맵을 보는 롯데에서는 이걸 쓸 이유가 없다.
  */
-export function risen(prev: Snapshot, next: Showtime[]): Showtime[] {
+export function risen(prev: Snapshot, next: Showtime[], minIncrease = 1): Showtime[] {
+  const need = Math.max(1, minIncrease);
   return next.filter((s) => {
     const before = prev.get(seatMapKey(s));
-    return before !== undefined && s.remainingSeats > before;
+    return before !== undefined && s.remainingSeats - before >= need;
+  });
+}
+
+/** 잔여석이 줄어든 회차. 알릴 일은 아니지만 중복 억제를 되돌릴 신호다. */
+export function fell(prev: Snapshot, next: Showtime[]): Showtime[] {
+  return next.filter((s) => {
+    const before = prev.get(seatMapKey(s));
+    return before !== undefined && s.remainingSeats < before;
   });
 }
 
@@ -79,6 +93,11 @@ export function fingerprint(seats: Seat[], showtime: Showtime): string {
  *
  * 취소표가 나왔다 들어갔다 하면 같은 자리로 알림이 연달아 온다.
  * 쿨다운 안에서는 한 번만 보낸다.
+ *
+ * 다만 **다시 팔린 뒤에 또 나온 것은 새 사건이다.** 잔여수를 지문에 넣어
+ * 두는 바람에 0→1 로 알리고, 1→0 으로 팔리고, 다시 0→1 이 되면 지문이
+ * 같아서 쿨다운에 걸려 묻혔다. 감시를 계속 돌려두는 쪽에서는 그게 바로
+ * 놓치면 안 되는 순간이다. 그래서 값이 떨어지면 그 회차의 기억을 지운다.
  */
 export class Dedupe {
   private readonly sent = new Map<string, number>();
@@ -90,6 +109,18 @@ export class Dedupe {
     if (last !== undefined && now - last < this.cooldownMs) return false;
     this.sent.set(fp, now);
     return true;
+  }
+
+  /**
+   * 이 회차에 대한 기억을 지운다.
+   *
+   * 잔여수가 떨어졌다는 건 그 자리가 팔렸다는 뜻이다. 다음에 또 나면
+   * 그건 앞서 알린 것과 다른 사건이므로 쿨다운을 적용하면 안 된다.
+   */
+  forget(keyPrefix: string): void {
+    for (const fp of this.sent.keys()) {
+      if (fp.startsWith(keyPrefix)) this.sent.delete(fp);
+    }
   }
 
   /** 만료된 항목 정리. 장시간 감시에서 맵이 무한정 자라지 않게 한다. */

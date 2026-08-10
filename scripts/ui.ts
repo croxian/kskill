@@ -107,6 +107,8 @@ interface StartBody {
   refs: string[];
   pollFloorSec?: number;
   maxIntervalSec?: number;
+  /** 한 번에 이만큼 풀렸을 때만 알린다. 단석 1, 연석 2. */
+  minIncrease?: number;
   lastStart?: string;
 }
 
@@ -136,6 +138,7 @@ async function start(
     action: 'notify',
     pollFloorSec: Math.max(30, body.pollFloorSec ?? 45),
     maxIntervalSec: Math.max(30, body.maxIntervalSec ?? 60),
+    ...(body.minIncrease && body.minIncrease > 1 ? { minIncrease: body.minIncrease } : {}),
     maxAlertsPerRun: 5,
     expiresAt: endOfDay(body.date, body.lastStart ?? '23:59'),
   };

@@ -63,6 +63,17 @@ export interface WatchSpec {
   // ── 좌석 조건 ──────────────────────────────────────────────
   block: SeatBlock | null;
   party: PartySpec;
+  /**
+   * 잔여수가 한 번에 이만큼 늘었을 때만 알린다. 기본 1.
+   *
+   * 좌석맵을 못 보는 체인에서 단석·연석을 흉내 내는 수단이다. 한 번에 2석이
+   * 풀렸다면 둘이 같이 취소한 것이고, 그러면 붙어 있을 가능성이 크다.
+   *
+   * **보장은 아니다.** 서로 떨어진 자리 둘이 같은 주기에 풀렸을 수도 있다.
+   * 그래서 알림에도 "연석이라는 보장은 없다" 고 적는다. 좌석맵을 보는
+   * 롯데에서는 party 로 진짜 연석을 판정하므로 이걸 쓸 이유가 없다.
+   */
+  minIncrease?: number;
 
   // ── 동작 ──────────────────────────────────────────────────
   action: 'notify' | 'hold';
@@ -101,6 +112,7 @@ export function normalizeSpec(spec: WatchSpec): WatchSpec {
     ...spec,
     pollFloorSec: Math.max(POLL_FLOOR_SEC, spec.pollFloorSec || POLL_FLOOR_SEC),
     stopBeforeMin: spec.stopBeforeMin ?? 30,
+    ...(spec.minIncrease && spec.minIncrease > 1 ? { minIncrease: spec.minIncrease } : {}),
     ...(spec.maxIntervalSec
       ? { maxIntervalSec: Math.max(POLL_FLOOR_SEC, spec.maxIntervalSec) }
       : {}),

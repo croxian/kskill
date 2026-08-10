@@ -90,6 +90,7 @@ function toBody(alert: Alert): AlertBody {
     mode: alert.spec.party.mode,
     action: alert.spec.action,
     ...(unfiltered ? { unfiltered } : {}),
+    ...(alert.increase !== undefined ? { increase: alert.increase } : {}),
   };
 }
 

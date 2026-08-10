@@ -473,3 +473,83 @@ describe('Watcher — 요청량', () => {
     expect(second.nextWakeMs).toBe(STOP);
   });
 });
+
+/**
+ * 좌석맵을 못 보는 체인에서 단석·연석을 흉내 내는 수단.
+ * 한 번에 2석이 풀렸다면 같이 취소한 것이고, 붙어 있을 가능성이 크다.
+ */
+describe('Watcher — 최소 증가분', () => {
+  function countOnly(rows: Showtime[]) {
+    var h = harness(rows);
+    // 좌석맵을 못 구하는 체인처럼 군다
+    var deps = { ...h.deps };
+    delete (deps as { fetchSeatMap?: unknown }).fetchSeatMap;
+    return { h: h, deps: deps };
+  }
+
+  it('1석만 풀리면 2연석 조건에서 알리지 않는다', async () => {
+    const c = countOnly([showtime({ remainingSeats: 0 })]);
+    const w = new Watcher({ ...SPEC, minIncrease: 2 }, c.deps, { coldStart: 'baseline' });
+
+    await poll(w, c.h);
+    c.h.setRows([showtime({ remainingSeats: 1 })]);
+    const res = await poll(w, c.h);
+
+    expect(res.alerts).toHaveLength(0);
+  });
+
+  it('2석이 한꺼번에 풀리면 알린다', async () => {
+    const c = countOnly([showtime({ remainingSeats: 0 })]);
+    const w = new Watcher({ ...SPEC, minIncrease: 2 }, c.deps, { coldStart: 'baseline' });
+
+    await poll(w, c.h);
+    c.h.setRows([showtime({ remainingSeats: 2 })]);
+    const res = await poll(w, c.h);
+
+    expect(res.alerts).toHaveLength(1);
+    expect(res.alerts[0]!.increase).toBe(2);
+  });
+
+  it('기본값에서는 1석도 알린다', async () => {
+    const c = countOnly([showtime({ remainingSeats: 0 })]);
+    const w = new Watcher(SPEC, c.deps, { coldStart: 'baseline' });
+
+    await poll(w, c.h);
+    c.h.setRows([showtime({ remainingSeats: 1 })]);
+
+    expect((await poll(w, c.h)).alerts).toHaveLength(1);
+  });
+
+  /**
+   * 감시를 계속 돌려두는 쪽에서 가장 놓치면 안 되는 순간이다.
+   * 잔여수를 지문에 넣어둔 탓에 0→1 로 알리고, 1→0 으로 팔리고,
+   * 다시 0→1 이 되면 지문이 같아서 쿨다운에 묻혔다.
+   */
+  it('다시 팔린 자리가 또 나면 다시 알린다', async () => {
+    const c = countOnly([showtime({ remainingSeats: 0 })]);
+    const w = new Watcher(SPEC, c.deps, { coldStart: 'baseline' });
+
+    await poll(w, c.h);
+    c.h.setRows([showtime({ remainingSeats: 1 })]);
+    expect((await poll(w, c.h)).alerts).toHaveLength(1); // 취소표
+
+    c.h.setRows([showtime({ remainingSeats: 0 })]);
+    expect((await poll(w, c.h)).alerts).toHaveLength(0); // 남이 채감
+
+    c.h.setRows([showtime({ remainingSeats: 1 })]);
+    expect((await poll(w, c.h)).alerts).toHaveLength(1); // 또 났다 — 새 사건
+  });
+
+  /** 한 번 알린 뒤에도 감시는 계속 돈다. 사람이 멈추기 전에는 끝나지 않는다. */
+  it('알린 뒤에도 계속 감시한다', async () => {
+    const c = countOnly([showtime({ remainingSeats: 0 })]);
+    const w = new Watcher(SPEC, c.deps, { coldStart: 'baseline' });
+
+    await poll(w, c.h);
+    c.h.setRows([showtime({ remainingSeats: 1 })]);
+    const res = await poll(w, c.h);
+
+    expect(res.alerts).toHaveLength(1);
+    expect(res.nextWakeMs).not.toBe(STOP);
+  });
+});

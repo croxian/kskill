@@ -95,6 +95,11 @@ export interface AlertBody {
    * 조건이 안 걸렸다는 사실은 알림 안에 있어야 한다 — 시작 로그가 아니라.
    */
   unfiltered?: 'block' | 'party' | 'both';
+  /**
+   * 이번에 몇 석이 한꺼번에 풀렸는가. 좌석맵을 못 보는 체인에서만 쓴다.
+   * 2 이상이면 붙어 있을 가능성이 있지만 보장은 아니다.
+   */
+  increase?: number;
 }
 
 /** 무엇이 적용되지 않았는지 한 줄로. */
@@ -118,9 +123,15 @@ export function renderCountAlert(a: AlertBody): string {
     `${esc(a.showtime.theaterName)} · ${esc(a.showtime.screenName)}`,
     `${formatDate(a.showtime.playDate)} ${a.showtime.startTime}`,
     ``,
-    `잔여 <b>${a.showtime.remainingSeats}석</b> / ${a.showtime.totalSeats}`,
+    a.increase && a.increase > 1
+      ? `<b>${a.increase}석</b>이 한꺼번에 풀렸습니다 · 잔여 ${a.showtime.remainingSeats} / ${a.showtime.totalSeats}`
+      : `잔여 <b>${a.showtime.remainingSeats}석</b> / ${a.showtime.totalSeats}`,
     ``,
-    a.unfiltered ? unfilteredNote(a.unfiltered) : `<i>좌석은 직접 고르셔야 합니다.</i>`,
+    a.increase && a.increase > 1
+      ? '<i>같이 취소된 것이라 붙어 있을 수 있지만, 확인은 화면에서 하셔야 합니다.</i>'
+      : a.unfiltered
+        ? unfilteredNote(a.unfiltered)
+        : `<i>좌석은 직접 고르셔야 합니다.</i>`,
   ].join('\n');
 }
 

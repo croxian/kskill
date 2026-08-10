@@ -146,8 +146,9 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
     <span class="sub">로컬 콘솔 · 이 창을 닫으면 감시도 멈춥니다</span>
   </header>
   <p class="lead">
-    회차를 불러와 고르면 설정을 쓰고 감시를 띄웁니다. 빈자리가 나면 텔레그램으로 알립니다.
-    좌석을 잡아주지는 않습니다 — 알림을 받고 앱에서 직접 누르는 쪽이 더 빠릅니다.
+    회차를 불러와 고르면 설정을 쓰고 감시를 띄웁니다. 빈자리가 나면 텔레그램으로 알리고,
+    <b>중지를 누르기 전까지 계속 봅니다</b> — 한 번 알렸다고 끝나지 않습니다.
+    좌석을 잡아주지는 않습니다. 알림을 받고 앱에서 직접 누르는 쪽이 더 빠릅니다.
   </p>
 
   <div class="cols">
@@ -196,6 +197,21 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
             <div><dt>고른 회차</dt><dd id="stPicked">0</dd></div>
             <div><dt>요청</dt><dd id="stReq">0<small> 회/시간</small></dd></div>
           </dl>
+
+          <div class="field">
+            <label for="need">한 번에 풀리는 최소 좌석</label>
+            <select id="need">
+              <option value="1">1석 이상 — 단석</option>
+              <option value="2">2석 이상 — 연석 가능성</option>
+              <option value="3">3석 이상</option>
+              <option value="4">4석 이상</option>
+            </select>
+          </div>
+          <p class="hint">
+            2석 이상은 둘이 같이 취소했다는 뜻이라 붙어 있을 가능성이 큽니다.
+            <b>보장은 아닙니다</b> — CGV 는 좌석맵을 안 보므로 떨어진 자리 둘이
+            같은 주기에 풀린 것일 수도 있습니다.
+          </p>
 
           <div class="row">
             <div class="field" style="flex:1 1 110px">
@@ -424,6 +440,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
   }
   $("floor").addEventListener("input", sync);
   $("max").addEventListener("input", sync);
+  $("need").addEventListener("change", sync);
 
   /** 고른 회차가 걸쳐 있는 지점만. 불러만 보고 안 고른 지점은 감시하지 않는다. */
   function pickedTheaters() {
@@ -452,6 +469,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
         refs: refs,
         pollFloorSec: Number($("floor").value) || 45,
         maxIntervalSec: Number($("max").value) || 60,
+        minIncrease: Number($("need").value) || 1,
         lastStart: last
       })
     })

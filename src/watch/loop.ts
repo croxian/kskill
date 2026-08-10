@@ -4,6 +4,7 @@ import { findCandidates } from '../core/runs.js';
 import {
   collapseDivisions,
   Dedupe,
+  fell,
   fingerprint,
   risen,
   snapshot,
@@ -29,6 +30,8 @@ export interface Alert {
    */
   candidate: Candidate | null;
   seatMap: SeatMap | null;
+  /** 직전 관측 대비 몇 석이 늘었는가. 첫 관측에서는 undefined. */
+  increase?: number;
 }
 
 export interface WatchDeps {
@@ -65,6 +68,8 @@ export interface RunResult {
 export class Watcher {
   private readonly spec: WatchSpec;
   private snap: Snapshot = new Map();
+  /** 직전 관측. 증가분을 알림에 실으려면 갱신 전 값이 필요하다. */
+  private prevSnap: Snapshot = new Map();
   private readonly dedupe: Dedupe;
   private cold = true;
   /**
@@ -143,13 +148,18 @@ export class Watcher {
 
     // 첫 관측이면 현재 상태를 한 번 보여주고, 이후로는 늘어난 것만 본다.
     // 지난 폴링에서 상한에 잘린 회차는 변화와 무관하게 다시 끼워 넣는다.
+    // 다시 팔린 회차는 기억을 지운다. 그래야 또 났을 때 새 사건으로 알린다.
+    // 이게 없으면 0→1 로 알린 뒤 1→0→1 이 쿨다운에 묻힌다.
+    for (const s of fell(this.snap, live)) this.dedupe.forget(seatMapKey(s));
+
     const wasCold = this.cold;
-    const fresh = wasCold ? live : risen(this.snap, live);
+    const fresh = wasCold ? live : risen(this.snap, live, this.spec.minIncrease);
     const carried = live.filter(
       (s) => this.pending.has(seatMapKey(s)) && !fresh.includes(s),
     );
     const changed = [...fresh, ...carried];
 
+    this.prevSnap = this.snap;
     this.snap = snapshot(live);
     this.cold = false;
     this.pending.clear();
@@ -182,7 +192,14 @@ export class Watcher {
         const fp = `${seatMapKey(showtime)}|n=${showtime.remainingSeats}`;
         if (!this.dedupe.shouldSend(fp, now)) continue;
 
-        const alert: Alert = { spec, showtime, candidate: null, seatMap: null };
+        const rise = this.riseOf(showtime);
+        const alert: Alert = {
+          spec,
+          showtime,
+          candidate: null,
+          seatMap: null,
+          ...(rise !== undefined ? { increase: rise } : {}),
+        };
         alerts.push(alert);
         await this.deps.notify(alert);
         if (spec.action === 'hold') break;
@@ -222,6 +239,12 @@ export class Watcher {
       requests: due.length,
       nextWakeMs: this.nextWake(now, offline),
     };
+  }
+
+  /** 직전 관측 대비 증가분. 몇 석이 한꺼번에 풀렸는지 알림에 싣는다. */
+  private riseOf(s: Showtime): number | undefined {
+    const before = this.prevSnap.get(seatMapKey(s));
+    return before === undefined ? undefined : s.remainingSeats - before;
   }
 
   /** 지금 봐야 할 지점·날짜 짝. */
