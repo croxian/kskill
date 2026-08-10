@@ -101,8 +101,8 @@ function byTime(a: { startTime: string; screenName: string }, b: typeof a): numb
 /* ── 감시 ─────────────────────────────────────────────── */
 
 interface StartBody {
-  theater: string;
-  theaterName?: string;
+  /** 고른 회차가 걸쳐 있는 지점들. 회차 키에서 뽑아 보낸다. */
+  theaters: { theaterId: string; label?: string }[];
   date: string;
   refs: string[];
   pollFloorSec?: number;
@@ -118,10 +118,15 @@ async function start(
 
   const body = (await readJson(req)) as StartBody;
   if (!body.refs?.length) return json(res, { error: '회차를 하나 이상 고르세요' }, 400);
+  if (!body.theaters?.length) return json(res, { error: '지점을 알 수 없습니다' }, 400);
 
   spec = {
-    id: `cgv-${body.theater}-${body.date}`,
-    theaters: [{ chain: 'cgv', theaterId: body.theater, label: body.theaterName ?? body.theater }],
+    id: `cgv-${body.theaters.map((t) => t.theaterId).join('-')}-${body.date}`,
+    theaters: body.theaters.map((t) => ({
+      chain: 'cgv' as const,
+      theaterId: t.theaterId,
+      label: t.label ?? t.theaterId,
+    })),
     movies: [],
     dates: [body.date],
     windows: [],

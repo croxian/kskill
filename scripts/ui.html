@@ -78,7 +78,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
 /* ── 회차 표 ── */
 .list{max-height:480px;overflow:auto;border-top:1px solid var(--rule-soft)}
 .st{
-  display:grid;grid-template-columns:22px 58px 84px 1fr;gap:10px;align-items:center;
+  display:grid;grid-template-columns:22px 58px 84px 92px 1fr;gap:10px;align-items:center;
   padding:7px 16px 7px 12px;border-bottom:1px solid var(--rule-soft);
   border-left:2px solid transparent;cursor:pointer;
 }
@@ -92,6 +92,9 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
   text-align:right;color:var(--open);
 }
 .st.sold .n{color:var(--gone);font-weight:700}
+.st .p{
+  font-size:11.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .st .m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .st .m i{font-style:normal;color:var(--faint)}
 
@@ -239,7 +242,8 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var shows = [];      // 불러온 회차
+  var shows = [];      // 불러온 회차 (여러 지점이 섞일 수 있다)
+  var theaters = {};   // code -> name, 불러온 지점
   var chosen = {};     // ref -> true
   var pollTimer = null;
 
@@ -310,8 +314,19 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
           $("pickNote").hidden = false;
           return;
         }
-        shows = r.b.showtimes || [];
-        chosen = {};
+        // 지점을 바꿔 다시 불러도 앞서 고른 것은 남긴다.
+        // 용산과 영등포를 같이 보는 게 원래 목적이었다.
+        var code = theaterCode();
+        var name = theaterName();
+        theaters[code] = name;
+        shows = shows.filter(function (s) { return s.theater !== code; })
+          .concat((r.b.showtimes || []).map(function (s) {
+            s.theater = code; s.theaterName = name; return s;
+          }));
+        shows.sort(function (a, b) {
+          return a.startTime.localeCompare(b.startTime) ||
+                 a.theaterName.localeCompare(b.theaterName);
+        });
         render();
       })
       .catch(function (e) {
@@ -351,6 +366,10 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
       n.className = "n";
       n.textContent = s.remainingSeats === 0 ? "매진" : s.remainingSeats + "/" + s.totalSeats;
 
+      var p = document.createElement("span");
+      p.className = "p";
+      p.textContent = s.theaterName || "";
+
       var m = document.createElement("span");
       m.className = "m";
       m.textContent = s.screenName + "  ";
@@ -358,7 +377,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
       i.textContent = s.movieName;
       m.appendChild(i);
 
-      row.append(cb, t, n, m);
+      row.append(cb, t, n, p, m);
       row.addEventListener("click", function (e) {
         if (e.target !== cb) cb.checked = !cb.checked;
         if (cb.checked) chosen[s.ref] = true; else delete chosen[s.ref];
@@ -368,9 +387,12 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
       list.appendChild(row);
     });
 
-    $("count").textContent = shows.length ? shows.length + "개 · 매진 " + sold : "—";
+    var sites = Object.keys(theaters).length;
+    $("count").textContent = shows.length
+      ? (sites > 1 ? "지점 " + sites + " · " : "") + shows.length + "개 · 매진 " + sold
+      : "—";
     $("hint").textContent = shows.length
-      ? "매진된 회차를 고르는 게 보통입니다. 취소표가 나면 알립니다."
+      ? "매진된 회차를 고르는 게 보통입니다. 지점을 바꿔 다시 불러오면 목록에 더해집니다."
       : "회차가 없습니다. 날짜를 확인해 주세요.";
     sync();
   }
@@ -395,11 +417,22 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
     // 요청은 지점 × 날짜로만 늘어난다. 회차를 몇 개 고르든 한 번에 다 온다.
     var floor = Math.max(30, Number($("floor").value) || 45);
     var cap = Math.max(floor, Number($("max").value) || 60);
-    $("stReq").innerHTML = Math.round(3600 / cap) + '<small> 회/시간</small>';
+    var sites = pickedTheaters().length || 1;
+    $("stPicked").textContent = n + (sites > 1 ? " · " + sites + "지점" : "");
+    $("stReq").innerHTML = Math.round((sites * 3600) / cap) + '<small> 회/시간</small>';
     $("start").disabled = n === 0 || running;
   }
   $("floor").addEventListener("input", sync);
   $("max").addEventListener("input", sync);
+
+  /** 고른 회차가 걸쳐 있는 지점만. 불러만 보고 안 고른 지점은 감시하지 않는다. */
+  function pickedTheaters() {
+    var seen = {};
+    shows.forEach(function (s) {
+      if (chosen[s.ref] && s.theater) seen[s.theater] = s.theaterName || s.theater;
+    });
+    return Object.keys(seen).map(function (c) { return { theaterId: c, label: seen[c] }; });
+  }
 
   /* ── 시작·중지 ── */
   var running = false;
@@ -414,8 +447,7 @@ input[type=text],input[type=number]{font-family:var(--f-mono);font-variant-numer
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        theater: theaterCode(),
-        theaterName: theaterName(),
+        theaters: pickedTheaters(),
         date: $("date").value,
         refs: refs,
         pollFloorSec: Number($("floor").value) || 45,

@@ -163,7 +163,7 @@ function buildSpec(
   const last = [...picked].sort((a, b) => a.startTime.localeCompare(b.startTime)).at(-1)!;
   return {
     id: `cgv-${theater.code}-${date}`,
-    theaters: [{ chain: 'cgv', theaterId: theater.code, label: theater.name }],
+    theaters: [{ chain: 'cgv' as const, theaterId: theater.code, label: theater.name }],
     movies: [],
     dates: [date],
     windows: [],

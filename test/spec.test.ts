@@ -5,6 +5,7 @@ import {
   matchesSpec,
   normalizeSpec,
   showtimeAt,
+  showtimeRef,
   toMinutes,
   type WatchSpec,
 } from '../src/core/spec.js';
@@ -120,5 +121,50 @@ describe('showtimeAt', () => {
   it('이른 조조도 날짜가 밀리지 않는다', () => {
     // 2026-08-09 06:00 KST = 2026-08-08 21:00 UTC
     expect(showtimeAt('20260809', '06:00').toISOString()).toBe('2026-08-08T21:00:00.000Z');
+  });
+});
+
+/**
+ * 회차 키는 지점까지 넣어야 한다. 상영관 번호는 지점 안에서만 고유해서
+ * 용산 018 과 영등포 018 이 한 키로 뭉개진다 — 두 지점을 같이 볼 때
+ * 고르지 않은 회차가 걸린다.
+ */
+describe('showtimeRef', () => {
+  const at = (theaterId: string, screenId: string): Showtime => ({
+    chain: 'cgv',
+    theaterId,
+    theaterName: '',
+    movieId: '30001323',
+    movieName: '오디세이',
+    screenId,
+    screenName: 'IMAX관',
+    playDate: '20260814',
+    playSequence: '4',
+    startTime: '19:10',
+    divisionCode: '*',
+    totalSeats: 624,
+    remainingSeats: 0,
+  });
+
+  it('다른 지점의 같은 상영관·순번을 구분한다', () => {
+    expect(showtimeRef(at('0013', '018'))).not.toBe(showtimeRef(at('0059', '018')));
+  });
+
+  it('고른 회차만 걸린다', () => {
+    const spec = { ...base, showtimes: [showtimeRef(at('0013', '018'))] };
+    expect(matchesSpec(at('0013', '018'), spec)).toBe(true);
+    expect(matchesSpec(at('0059', '018'), spec)).toBe(false);
+    expect(matchesSpec(at('0013', '017'), spec)).toBe(false);
+  });
+
+  /** 회차를 집었으면 다른 조건은 볼 필요가 없다. */
+  it('회차를 집으면 영화·상영관 조건보다 우선한다', () => {
+    const spec = {
+      ...base,
+      movies: ['다른영화'],
+      screenPattern: '4DX',
+      showtimes: [showtimeRef(at('0013', '018'))],
+    };
+    expect(matchesSpec(at('0013', '018'), spec)).toBe(true);
   });
 });
