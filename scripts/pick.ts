@@ -189,14 +189,21 @@ function budget(spec: WatchSpec): number {
 
 /* ── 실행 ─────────────────────────────────────────────── */
 
+/**
+ * 감시기를 띄운다.
+ *
+ * npm 을 셸로 부르면 Windows 에서 DEP0190 경고가 뜬다 — shell: true 와
+ * 인자 배열을 함께 쓰면 인자가 이스케이프되지 않고 이어붙기만 한다.
+ * node 를 직접 띄우고 tsx 를 로더로 물리면 셸이 끼지 않는다.
+ */
 function runWatcher(): Promise<void> {
   console.log('');
   return new Promise((resolve) => {
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const child = spawn(npm, ['run', 'watch', '--', CONFIG], {
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-    });
+    const child = spawn(
+      process.execPath,
+      ['--import', 'tsx', '--env-file-if-exists=.env', 'src/main.ts', CONFIG],
+      { stdio: 'inherit' },
+    );
     child.on('close', () => resolve());
   });
 }

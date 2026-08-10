@@ -28,6 +28,19 @@ import { CGV_THEATERS } from './cgv-theaters.js';
  * 띄울 수 있으므로 남이 닿으면 안 된다.
  */
 
+/**
+ * 감시기를 띄우는 명령.
+ *
+ * 처음에는 npm run watch 를 셸로 띄웠는데, Windows 에서 .cmd 를 실행하려면
+ * shell: true 가 필요하고 Node 가 그 조합에 경고를 낸다 (DEP0190) —
+ * 인자가 이스케이프되지 않고 이어붙기만 하기 때문이다. 설정 파일 이름이
+ * 우리 손에서 나오니 당장 위험하진 않지만, 셸을 거칠 이유가 없다.
+ *
+ * node 를 직접 띄우고 tsx 를 로더로 물린다. 셸도 npm 도 끼지 않는다.
+ * package.json 의 watch 스크립트와 같은 일을 한다.
+ */
+const WATCH_ARGS = ['--import', 'tsx', '--env-file-if-exists=.env', 'src/main.ts'];
+
 const PORT = Number(process.env.UI_PORT ?? 5173);
 const HOST = '127.0.0.1';
 const CONFIG = 'watch.json';
@@ -149,11 +162,7 @@ async function start(
   writeFileSync(CONFIG, `${JSON.stringify(spec, null, 2)}\n`, 'utf8');
 
   log = [`${stamp()} ${CONFIG} 을 쓰고 감시를 시작합니다`];
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  watcher = spawn(npm, ['run', 'watch', '--', CONFIG], {
-    shell: process.platform === 'win32',
-    env: process.env,
-  });
+  watcher = spawn(process.execPath, [...WATCH_ARGS, CONFIG], { env: process.env });
   watcher.stdout?.on('data', (b: Buffer) => absorb(b));
   watcher.stderr?.on('data', (b: Buffer) => absorb(b));
   watcher.on('close', (code) => {
@@ -167,7 +176,7 @@ async function start(
 function stop(res: import('node:http').ServerResponse): void {
   if (!watcher) return json(res, status());
   log.push(`${stamp()} 중지를 요청했습니다`);
-  // Windows 는 셸을 거쳐 띄우므로 자식까지 확실히 잡으려면 트리를 죽여야 한다.
+  // 확보 모드에서는 감시기가 브라우저를 띄운다. Windows 에서는 트리째 잡는다.
   if (process.platform === 'win32' && watcher.pid) {
     spawn('taskkill', ['/pid', String(watcher.pid), '/t', '/f']);
   } else {
