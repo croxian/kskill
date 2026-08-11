@@ -292,10 +292,23 @@ export class Watcher {
     return out;
   }
 
-  /** 이 짝을 다음에 언제 볼 것인가. 그 안에서 가장 급한 회차가 정한다. */
+  /**
+   * 이 짝을 다음에 언제 볼 것인가.
+   *
+   * 예산을 정했으면 **그게 간격이다.** 예전에는 예산을 하한으로만 걸었는데,
+   * 그러면 실제 간격은 상영까지 남은 시간이 정한다 — 20시간 전이면 180초다.
+   * 360회/시를 걸어놓고 3분 20초마다 도는 일이 실제로 있었다.
+   *
+   * 남은 시간에 따라 느긋해지는 표는 "난 자리가 한동안 남아 있다" 는 가정
+   * 위에 서 있다. 매진된 특별관에서는 그 가정이 틀리다. 사람이 예산을
+   * 정했다는 것은 그 판단을 이미 내렸다는 뜻이라 표를 덮어쓴다.
+   *
+   * 언제 **그만둘지**는 그대로 회차가 정한다. 판매가 끝난 회차를 예산이
+   * 남았다고 계속 두드릴 이유는 없다.
+   */
   private pairInterval(showtimes: Showtime[], now: number): number {
     const mine = collapseDivisions(showtimes).filter((s) => matchesSpec(s, this.spec));
-    return nextWakeMs(
+    const tiered = nextWakeMs(
       mine.map((s) => ({
         showAt: showtimeAt(s.playDate, s.startTime),
         ...(s.salesEndAt ? { stopAt: showtimeAt(s.playDate, s.salesEndAt) } : {}),
@@ -307,6 +320,12 @@ export class Watcher {
         ...(this.spec.maxIntervalSec ? { maxSec: this.spec.maxIntervalSec } : {}),
       },
     );
+    if (tiered === STOP || !this.spec.maxRequestsPerHour) return tiered;
+
+    // 정각에 몰리지 않게 흔든다. 표와 달리 여기서는 예산이 천장이므로
+    // 아래로만 흔든다 — 위로 흔들면 정한 예산을 넘는다.
+    const sec = this.floorSec();
+    return Math.round(sec * (1 - Math.random() * 0.1) * 1000);
   }
 
   /**

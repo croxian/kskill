@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 
 import { createCgvAdapter } from '../src/adapters/cgv/adapter.js';
-import { showtimeRef, type WatchSpec } from '../src/core/spec.js';
+import { POLL_FLOOR_SEC, showtimeRef, type WatchSpec } from '../src/core/spec.js';
 import type { Showtime } from '../src/types.js';
 import { CGV_THEATERS } from './cgv-theaters.js';
 
@@ -175,10 +175,10 @@ function buildSpec(
     block: null,
     party: { mode: 'single', size: 1 },
     action: 'notify',
-    pollFloorSec: 45,
+    pollFloorSec: POLL_FLOOR_SEC,
     // 매진된 특별관은 사흘 전에 난 자리도 즉시 사라진다. 남은 시간과
     // 무관하게 자주 본다. 회차를 좁혔으니 요청은 여전히 1건/주기다.
-    maxIntervalSec: 60,
+    maxRequestsPerHour: 120,
     maxAlertsPerRun: 5,
     expiresAt: watchUntil(date, lastEnd),
   };
@@ -186,9 +186,7 @@ function buildSpec(
 
 /** 시간당 최대 요청 수. 사용자가 자기 부담을 알고 있어야 한다. */
 function budget(spec: WatchSpec): number {
-  const pairs = spec.theaters.length * spec.dates.length;
-  const sec = Math.max(spec.pollFloorSec, Math.min(spec.maxIntervalSec ?? 1800, 1800));
-  return Math.round((pairs * 3600) / sec);
+  return spec.maxRequestsPerHour ?? 0;
 }
 
 /* ── 실행 ─────────────────────────────────────────────── */

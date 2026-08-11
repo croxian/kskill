@@ -709,3 +709,58 @@ describe('Watcher — 실제로 걸리는 조건', () => {
     expect((await poll(w, h)).alerts).toHaveLength(1);
   });
 });
+
+/**
+ * 예산을 하한으로만 걸었더니 실제 간격은 상영까지 남은 시간이 정했다.
+ * 20시간 전이면 180초 — 360회/시를 걸어놓고 3분 20초마다 도는 일이 있었다.
+ */
+describe('Watcher — 예산이 간격을 정한다', () => {
+  /** 상영까지 20시간 남은 회차. 표대로면 180초다. */
+  const FAR = Date.parse('2026-08-08T23:10:00Z');
+
+  function far(budget?: number) {
+    const h = harness([showtime()]);
+    h.setNow(FAR);
+    const spec: WatchSpec = {
+      ...SPEC,
+      pollFloorSec: 10,
+      ...(budget ? { maxRequestsPerHour: budget } : {}),
+    };
+    return { h, w: new Watcher(spec, h.deps, { coldStart: 'baseline' }) };
+  }
+
+  it('예산을 정하면 남은 시간과 무관하게 그 간격으로 본다', async () => {
+    const { h, w } = far(360);
+    const res = await w.runOnce();
+    // 10초 ± 아래로만 흔들림
+    expect(res.nextWakeMs).toBeGreaterThan(8_000);
+    expect(res.nextWakeMs).toBeLessThanOrEqual(10_000);
+    expect(h.listShowtimes).toHaveBeenCalled();
+  });
+
+  it('예산이 없으면 예전처럼 남은 시간이 정한다', async () => {
+    const { w } = far();
+    const res = await w.runOnce();
+    expect(res.nextWakeMs).toBeGreaterThanOrEqual(180_000); // 3~24시간 구간
+  });
+
+  it('예산을 넘겨 흔들지 않는다', async () => {
+    const { w } = far(120);
+    for (let i = 0; i < 30; i++) {
+      const res = await w.runOnce();
+      expect(res.nextWakeMs).toBeLessThanOrEqual(30_000); // 3600/120
+    }
+  });
+
+  /** 판매가 끝난 회차는 예산이 남았다고 계속 두드릴 이유가 없다. */
+  it('판매가 끝나면 예산과 무관하게 멈춘다', async () => {
+    const h = harness([showtime({ salesEndAt: '19:25' })]);
+    h.setNow(Date.parse('2026-08-09T10:30:00Z')); // KST 19:30, 판매 종료 뒤
+    const w = new Watcher(
+      { ...SPEC, pollFloorSec: 10, maxRequestsPerHour: 360 },
+      h.deps,
+      { coldStart: 'baseline' },
+    );
+    expect((await w.runOnce()).nextWakeMs).toBe(STOP);
+  });
+});
