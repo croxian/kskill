@@ -107,6 +107,10 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
   padding:3px 11px;font-size:12px;color:var(--dim);cursor:pointer;
 }
 .quick button:hover{border-color:var(--faint);color:var(--ink)}
+.quick button[aria-pressed="true"]{
+  border-color:var(--lamp);color:var(--lamp);background:var(--lamp-soft);
+}
+.quick .sep{width:1px;background:var(--rule);margin:2px 4px}
 
 /* ── 부담 ── */
 .stat{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden}
@@ -175,10 +179,11 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
         </div>
 
         <div class="quick" id="quick" hidden>
-          <button data-pick="sold">매진만</button>
-          <button data-pick="imax">IMAX</button>
-          <button data-pick="all">전부</button>
-          <button data-pick="none">해제</button>
+          <button data-filter="sold" aria-pressed="false">매진만</button>
+          <button data-filter="imax" aria-pressed="false">IMAX</button>
+          <span class="sep"></span>
+          <button data-pick="all">보이는 것 전부</button>
+          <button data-pick="none">선택 해제</button>
         </div>
       </div>
       <div class="list" id="list" hidden></div>
@@ -264,6 +269,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
   var theaters = {};   // code -> name, 불러온 지점
   var floorSec = 10;   // 서버가 알려준다. 여기 적어두면 한쪽만 고치게 된다.
   var chosen = {};     // ref -> true
+  var filters = {};    // 보기 필터. 고른 것과는 별개다 — 걸러도 선택은 남는다.
   var pollTimer = null;
 
   /* ── 날짜 ── */
@@ -282,9 +288,22 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
     return (d.getUTCMonth() + 1) + "월 " + d.getUTCDate() + "일(" + w + ")" + tag;
   }
 
-  (function fillDates() {
+  /**
+   * 날짜 목록을 만든다.
+   *
+   * 페이지를 열 때 한 번만 만들면 자정을 넘겨도 어제 기준으로 남는다.
+   * 콘솔은 며칠씩 띄워두는 물건이라 실제로 어긋난다. 오늘이 바뀌었는지
+   * 주기적으로 보고 바뀌었으면 다시 만든다. 고른 날짜는 지킨다.
+   */
+  var dateBase = "";
+  function fillDates() {
     var base = kstToday();
+    if (ymd(base) === dateBase) return;
+    dateBase = ymd(base);
+
     var sel = $("date");
+    var keep = sel.value;
+    sel.textContent = "";
     for (var i = 0; i < 14; i++) {
       var d = new Date(base.getTime() + i * 86400000);
       var o = document.createElement("option");
@@ -292,7 +311,10 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
       o.textContent = label(d, i);
       sel.appendChild(o);
     }
-  })();
+    // 지난 날짜를 고르고 있었으면 오늘로 되돌린다
+    sel.value = keep && keep >= dateBase ? keep : dateBase;
+  }
+  fillDates();
 
   fetch("/api/theaters").then(function (r) { return r.json(); }).then(function (d) {
     if (d.floorSec) { floorSec = d.floorSec; sync(); }
@@ -370,6 +392,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
     var sold = 0;
     shows.forEach(function (s) {
       if (s.remainingSeats === 0) sold++;
+      if (!visible(s)) return;
       var row = document.createElement("div");
       row.className = "st" + (s.remainingSeats === 0 ? " sold" : "") + (chosen[s.ref] ? " on" : "");
 
@@ -408,23 +431,45 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
     });
 
     var sites = Object.keys(theaters).length;
+    var shown = shows.filter(visible).length;
+    var filtered = shown !== shows.length;
     $("count").textContent = shows.length
-      ? (sites > 1 ? "지점 " + sites + " · " : "") + shows.length + "개 · 매진 " + sold
+      ? (sites > 1 ? "지점 " + sites + " · " : "") +
+        (filtered ? shown + " / " + shows.length + "개" : shows.length + "개") +
+        " · 매진 " + sold
       : "—";
-    $("hint").textContent = shows.length
-      ? "매진된 회차를 고르는 게 보통입니다. 지점을 바꿔 다시 불러오면 목록에 더해집니다."
-      : "회차가 없습니다. 날짜를 확인해 주세요.";
+    var n0 = Object.keys(chosen).length;
+    $("hint").textContent = !shows.length
+      ? "회차가 없습니다. 날짜를 확인해 주세요."
+      : shown === 0
+        ? "필터에 걸리는 회차가 없습니다. 칩을 다시 눌러 해제하세요."
+        : n0 > 0 && filtered
+          ? "고른 " + n0 + "개는 필터와 무관하게 유지됩니다."
+          : "매진된 회차를 고르는 게 보통입니다. 지점을 바꿔 다시 불러오면 목록에 더해집니다.";
     sync();
   }
 
+  /** 보기 필터를 통과하는가. 걸러진 회차도 이미 고른 것이면 선택은 유지된다. */
+  function visible(s) {
+    if (filters.sold && s.remainingSeats !== 0) return false;
+    if (filters.imax && !/imax/i.test(s.screenName)) return false;
+    return true;
+  }
+
   $("quick").addEventListener("click", function (e) {
+    var f = e.target.getAttribute("data-filter");
+    if (f) {
+      filters[f] = !filters[f];
+      e.target.setAttribute("aria-pressed", filters[f] ? "true" : "false");
+      render();
+      return;
+    }
     var how = e.target.getAttribute("data-pick");
     if (!how) return;
-    chosen = {};
-    shows.forEach(function (s) {
+    // 보이는 것만 건드린다. 걸러진 회차의 선택을 몰래 지우면 안 된다.
+    shows.filter(visible).forEach(function (s) {
       if (how === "all") chosen[s.ref] = true;
-      else if (how === "sold" && s.remainingSeats === 0) chosen[s.ref] = true;
-      else if (how === "imax" && /imax/i.test(s.screenName)) chosen[s.ref] = true;
+      else delete chosen[s.ref];
     });
     render();
   });
@@ -551,6 +596,8 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
   }
 
   (function tick() {
+    // 자정을 넘겼으면 날짜 목록을 다시 만든다. 콘솔은 며칠씩 띄워둔다.
+    fillDates();
     fetch("/api/status").then(function (r) { return r.json(); }).then(paint).catch(function () {});
     pollTimer = setTimeout(tick, 2000);
   })();

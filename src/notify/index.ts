@@ -109,8 +109,10 @@ function unappliedConditions(alert: Alert): AlertBody['unfiltered'] {
 }
 
 function buttons(alert: Alert, template?: string): InlineButton[][] {
-  const url = buildDeepLink(alert.showtime, template);
-  const rows: InlineButton[][] = [[{ text: '🎬 예매 화면 열기', url }]];
+  // 딥링크 템플릿은 롯데용이다. CGV 에 갖다 쓰면 엉뚱한 주소가 된다.
+  const url = buildDeepLink(alert.showtime, alert.showtime.chain === 'lotte' ? template : undefined);
+  const label = alert.showtime.chain === 'cgv' ? '🎬 CGV 예매 열기' : '🎬 롯데시네마 예매 열기';
+  const rows: InlineButton[][] = [[{ text: label, url }]];
 
   if (alert.spec.action === 'hold' && alert.candidate) {
     const fp = fingerprint(alert.candidate.seats, alert.showtime);

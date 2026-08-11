@@ -23,9 +23,20 @@ import type { Showtime } from '../types.js';
  */
 
 export const LOTTE_TICKETING_URL = 'https://www.lottecinema.co.kr/NLCHS/Ticketing';
+export const CGV_TICKETING_URL = 'https://cgv.co.kr/cnm/movieBook';
+
+/**
+ * 체인마다 예매 첫 화면이 다르다.
+ *
+ * 이걸 안 나눠서 CGV 알림에 롯데 링크가 붙어 나갔다. 자리가 났다는 알림을
+ * 받고 눌렀는데 다른 극장 예매 화면이 열리면 아무 쓸모가 없다.
+ */
+export function ticketingUrl(chain: string): string {
+  return chain === 'cgv' ? CGV_TICKETING_URL : LOTTE_TICKETING_URL;
+}
 
 export function buildDeepLink(s: Showtime, template?: string): string {
-  if (!template) return LOTTE_TICKETING_URL;
+  if (!template) return ticketingUrl(s.chain);
 
   const dash = `${s.playDate.slice(0, 4)}-${s.playDate.slice(4, 6)}-${s.playDate.slice(6, 8)}`;
   const vars: Record<string, string> = {

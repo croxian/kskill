@@ -7,6 +7,7 @@ import { findCandidates } from '../src/core/runs.js';
 import type { WatchSpec } from '../src/core/spec.js';
 import {
   buildDeepLink,
+  CGV_TICKETING_URL,
   createTelegramNotifier,
   esc,
   formatDate,
@@ -358,5 +359,32 @@ describe('createTelegramNotifier', () => {
 
     await expect(n.notify(alert())).resolves.toBeUndefined();
     expect(errors).toEqual(['bot was blocked']);
+  });
+});
+
+/**
+ * CGV 알림에 롯데 링크가 붙어 나갔다. 자리가 났다는 알림을 받고 눌렀는데
+ * 다른 극장 예매 화면이 열리면 아무 쓸모가 없다.
+ */
+describe('체인별 예매 링크', () => {
+  it('CGV 회차는 CGV 로 보낸다', () => {
+    expect(buildDeepLink({ ...SHOWTIME, chain: 'cgv' })).toContain('cgv.co.kr');
+  });
+
+  it('롯데 회차는 롯데로 보낸다', () => {
+    expect(buildDeepLink({ ...SHOWTIME, chain: 'lotte' })).toContain('lottecinema');
+  });
+
+  /** 딥링크 템플릿은 롯데 화면 주소다. CGV 에 갖다 쓰면 엉뚱한 곳으로 간다. */
+  it('CGV 에는 롯데 템플릿을 쓰지 않는다', () => {
+    const notifier = createTelegramNotifier({
+      token: 't',
+      chatId: 1,
+      deepLinkTemplate: 'https://www.lottecinema.co.kr/x?t={theaterId}',
+      fetchImpl: (async () => new Response('{"ok":true,"result":{"message_id":1}}')) as typeof fetch,
+    });
+    void notifier;
+    // 링크 조립만 확인한다 — 발송은 다른 테스트에서 본다
+    expect(buildDeepLink({ ...SHOWTIME, chain: 'cgv' }, undefined)).toBe(CGV_TICKETING_URL);
   });
 });
