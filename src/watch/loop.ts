@@ -378,7 +378,13 @@ export class Watcher {
       }
     }
     if (pending.length === 0) return STOP;
-    return Math.max(1000, Math.min(...pending) - now);
+
+    // 조회에 걸린 시간을 빼고 남은 만큼만 잔다.
+    //
+    // now 는 이 주기가 **시작할 때** 찍은 값이다. 그대로 쓰면 조회에 0.4초가
+    // 걸렸을 때 0.4초 + 간격만큼 쉬게 되어, 3초로 맞춰도 실제로는 3.4초가
+    // 된다. 간격이 30초일 때는 오차 1%라 눈에 안 띄었지만 3초에서는 13%다.
+    return Math.max(1000, Math.min(...pending) - this.deps.now());
   }
 
   /**

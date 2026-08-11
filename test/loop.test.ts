@@ -764,3 +764,31 @@ describe('Watcher — 예산이 간격을 정한다', () => {
     expect((await w.runOnce()).nextWakeMs).toBe(STOP);
   });
 });
+
+/**
+ * now 는 주기가 시작할 때 찍은 값이다. 그대로 자면 조회에 걸린 시간만큼
+ * 늘어난다 — 3초로 맞춰도 실제로는 3.4초가 된다. 간격이 짧을수록 크게 어긋난다.
+ */
+describe('Watcher — 조회에 걸린 시간을 뺀다', () => {
+  it('조회가 오래 걸린 만큼 덜 잔다', async () => {
+    const h = harness();
+    let clock = NOW;
+    h.deps.now = () => clock;
+    // 조회하는 동안 시계가 400ms 흐른다
+    h.listShowtimes.mockImplementation(async () => {
+      clock += 400;
+      return [showtime()];
+    });
+
+    const w = new Watcher(
+      { ...SPEC, pollFloorSec: 3, maxRequestsPerHour: 1200 },
+      h.deps,
+      { coldStart: 'baseline' },
+    );
+    const res = await w.runOnce();
+
+    // 3초 간격 − 조회 400ms ≈ 2.6초. 3초를 통째로 자면 3.4초 주기가 된다.
+    expect(res.nextWakeMs).toBeLessThan(3_000);
+    expect(res.nextWakeMs).toBeGreaterThan(2_000);
+  });
+});
