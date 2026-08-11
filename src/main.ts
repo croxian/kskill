@@ -227,6 +227,7 @@ async function main() {
       // 요청 수를 매번 보여준다. 얼마나 부담을 주고 있는지 모르면 조절할 수 없다.
       const parts = [
         `요청 ${res.requests}`,
+        `누적 ${res.totalRequests}`,
         ...(res.backoffSteps > 0 ? [`물러섬 ${res.backoffSteps}단`] : []),
         `회차 ${res.polled}`,
         `변화 ${res.targets}`,

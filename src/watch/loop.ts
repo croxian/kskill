@@ -68,6 +68,13 @@ export interface RunResult {
   offline: boolean;
   /** 밀려서 물러선 단계. 0 이면 설정한 속도 그대로. */
   backoffSteps: number;
+  /**
+   * 감시를 시작한 뒤 지금까지 보낸 요청 수.
+   *
+   * 시간당 수치만 보면 하루치 총량이 안 보인다. 10초 감시를 20시간 돌리면
+   * 7천 회인데, 화면에는 "360회/시" 하나만 떠 있으면 그 크기를 못 느낀다.
+   */
+  totalRequests: number;
 }
 
 export class Watcher {
@@ -108,6 +115,7 @@ export class Watcher {
    * 두드리면 단단한 차단이 된다.
    */
   private readonly backoff = new Backoff();
+  private total = 0;
 
   constructor(
     spec: WatchSpec,
@@ -268,6 +276,7 @@ export class Watcher {
       suppressed,
       offline,
       requests: due.length,
+      totalRequests: (this.total += due.length),
       backoffSteps: this.backoff.steps,
       nextWakeMs: this.nextWake(now, offline),
     };

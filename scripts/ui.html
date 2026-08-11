@@ -199,6 +199,10 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
             <div><dt>고른 회차</dt><dd id="stPicked">0</dd></div>
             <div><dt>조회 간격</dt><dd id="stReq">—</dd></div>
           </dl>
+          <dl class="stat">
+            <div><dt>감시 시간</dt><dd id="stHours">—</dd></div>
+            <div><dt>총 요청 (예상)</dt><dd id="stTotal">—</dd></div>
+          </dl>
 
           <div class="field">
             <label for="need">한 번에 풀리는 최소 좌석</label>
@@ -217,7 +221,7 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
 
           <div class="field">
             <label for="budget">시간당 요청 <span id="budgetV">120</span>회</label>
-            <input type="range" id="budget" min="30" max="360" step="10" value="120">
+            <input type="range" id="budget" min="30" max="720" step="10" value="120">
           </div>
           <p class="hint" id="budgetNote"></p>
 
@@ -439,14 +443,21 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
     $("budgetV").textContent = budget;
     $("stPicked").textContent = n + (sites > 1 ? " · " + sites + "지점" : "");
     $("stReq").innerHTML = every + '<small>초마다</small>';
+    // 시간당 수치만 보면 하루치가 안 보인다. 상영까지 20시간이면 10초 감시가
+    // 7천 회다. 결정에 필요한 건 이쪽 숫자다.
+    var hours = hoursLeft();
+    var total = Math.round((3600 / every) * sites * hours);
+    $("stHours").innerHTML = hours.toFixed(1) + '<small>시간</small>';
+    $("stTotal").textContent = total.toLocaleString();
+
     var capped = Math.ceil((sites * 3600) / budget) < floorSec;
     $("budgetNote").innerHTML =
       sites + "지점을 " + every + "초마다 봅니다." +
       (capped
         ? " <b>하한 " + floorSec + "초</b>에 걸렸습니다 — 예산을 더 올려도 빨라지지 않습니다."
         : " 지점을 늘리면 그만큼 성기게 보고 총량은 그대로입니다.") +
-      (budget > 300
-        ? " <b>안전한 값은 아무도 모릅니다.</b> 밀리면 감시기가 물러서고, 차단되면 멈춥니다."
+      (total > 10000
+        ? " <b>총 요청이 만 건을 넘습니다.</b> 시간당 수치보다 이쪽을 보고 정하세요."
         : budget < 60
           ? " 느슨합니다 — 초 단위로 사라지는 자리는 대부분 놓칩니다."
           : "");
@@ -454,6 +465,22 @@ input[type=range]{width:100%;accent-color:var(--lamp);background:none;border:non
   }
   $("budget").addEventListener("input", sync);
   $("need").addEventListener("change", sync);
+
+  /**
+   * 판매가 끝날 때까지 몇 시간 남았나.
+   *
+   * 고른 회차 중 가장 늦은 판매 종료까지. 그게 감시가 도는 시간이고,
+   * 총 요청 수는 거기에 비례한다.
+   */
+  function hoursLeft() {
+    var picked = shows.filter(function (s) { return chosen[s.ref]; });
+    if (picked.length === 0) return 0;
+    var last = picked.map(function (s) { return s.salesEndAt || s.startTime; }).sort().pop();
+    var d = $("date").value;
+    var parts = last.split(":");
+    var end = Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8), +parts[0] - 9, +parts[1]);
+    return Math.max(0, (end - Date.now()) / 3600000);
+  }
 
   /** 고른 회차가 걸쳐 있는 지점만. 불러만 보고 안 고른 지점은 감시하지 않는다. */
   function pickedTheaters() {
