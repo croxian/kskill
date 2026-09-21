@@ -9,15 +9,20 @@ ktx_watch.py - KTX 빈자리 감시 (개인용)
 --reserve 를 붙였을 때만 예약까지 시도하고, 결제는 하지 않습니다.
 (코레일 예약은 보통 10분 안에 직접 결제해야 유지됩니다. 앱에서 결제하세요.)
 
+주의: search_train 은 지정한 시각부터 10여 대만 돌려줍니다. 하루 전체를 보려면
+--allday 를 붙이세요. 안 붙이면 첫차 근처만 보고 "전부 매진"처럼 보입니다.
+
 사용 예:
-    python ktx_watch.py --dep 서울 --arr 부산 --date 20260925 --time 060000
-    python ktx_watch.py --dep 서울 --arr 부산 --date 20260925 --time 060000 --reserve
+    python ktx_watch.py
+    python ktx_watch.py --dep 서울 --arr 부산 --date 20260925 --allday
+    python ktx_watch.py --dep 서울 --arr 부산 --date 20260925 --time 060000 --ktx-only
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import inspect
 import os
 import sys
 import time
@@ -27,6 +32,7 @@ from pathlib import Path
 # 안전장치. 명령줄로 더 공격적으로 바꿀 수 없도록 여기서 못을 박아 둡니다.
 # ---------------------------------------------------------------------------
 MIN_INTERVAL_SEC = 30      # 조회 간격의 하한. 이보다 짧게는 절대 돌지 않습니다.
+MIN_INTERVAL_ALLDAY = 60   # --allday 는 한 번에 여러 번 요청하므로 더 길게 잡습니다.
 MAX_RUNTIME_MIN = 60       # 총 실행 시간의 상한. 밤새 돌리지 않습니다.
 MAX_CONSECUTIVE_ERRORS = 3  # 에러가 이만큼 연달아 나면 멈춥니다.
 
@@ -118,6 +124,16 @@ def parse_args() -> argparse.Namespace:
         help=f"몇 분간 감시할지. 최대 {MAX_RUNTIME_MIN}분.",
     )
     p.add_argument(
+        "--allday",
+        action="store_true",
+        help="첫차부터 끝차까지 하루 전체를 봅니다. 기본값은 지정 시각부터 10여 대뿐입니다.",
+    )
+    p.add_argument(
+        "--ktx-only",
+        action="store_true",
+        help="KTX 만 봅니다. 기본값은 ITX-새마을, 무궁화 등도 함께 봅니다.",
+    )
+    p.add_argument(
         "--reserve",
         action="store_true",
         help="자리를 찾으면 예약까지 시도합니다. 결제는 하지 않습니다.",
@@ -177,6 +193,50 @@ def main() -> int:
     # 로그인은 딱 한 번만 합니다. 반복할수록 서버에 부담이 됩니다.
     korail = Korail(korail_id, korail_pw)
 
+    # 이 버전의 라이브러리가 뭘 지원하는지 시작할 때 한 번만 확인합니다.
+    search_params = set(inspect.signature(Korail.search_train).parameters)
+    supports_no_seats = "include_no_seats" in search_params
+    supports_allday = hasattr(Korail, "search_train_allday")
+
+    extra = {}
+    if args.ktx_only:
+        try:
+            from korail2 import TrainType
+
+            extra["train_type"] = TrainType.KTX
+        except Exception:
+            print("[알림] KTX 만 걸러내지 못했습니다. 전체 열차를 봅니다.")
+
+    use_allday = args.allday and supports_allday
+    if args.allday and not supports_allday:
+        print("[알림] 이 버전은 하루 전체 조회를 지원하지 않습니다. 앞쪽 일부만 봅니다.")
+    if use_allday:
+        # 하루 전체 조회는 내부에서 여러 번 요청합니다. 간격을 더 벌립니다.
+        interval = max(interval, MIN_INTERVAL_ALLDAY)
+        print(f"[설정] 하루 전체를 봅니다. 요청이 많아 간격을 {interval}초로 올렸습니다.")
+
+    # rich_mode: 매진까지 한 번에 받아와 직접 걸러내는 방식.
+    # 요청 횟수는 그대로면서 "전체 몇 대 중 몇 대 빈자리"를 보여줄 수 있습니다.
+    rich_mode = supports_no_seats
+
+    def seat_state(train):
+        """빈자리 여부. 판단할 수 없으면 None 입니다."""
+        fn = getattr(train, "has_seat", None)
+        if not callable(fn):
+            return None
+        try:
+            return bool(fn())
+        except Exception:
+            return None
+
+    def fetch():
+        kwargs = dict(extra)
+        if rich_mode:
+            kwargs["include_no_seats"] = True
+        if use_allday:
+            return korail.search_train_allday(dep, arr, date, depart_time, **kwargs)
+        return korail.search_train(dep, arr, date, depart_time, **kwargs)
+
     attempts = 0
     errors = 0
 
@@ -184,9 +244,21 @@ def main() -> int:
         attempts += 1
         stamp = time.strftime("%H:%M:%S")
 
+        total = None
         try:
-            trains = korail.search_train(dep, arr, date, depart_time)
+            trains = fetch()
             errors = 0  # 성공했으니 에러 카운터를 되돌립니다.
+
+            if rich_mode:
+                states = [seat_state(t) for t in trains]
+                if trains and all(s is None for s in states):
+                    # 빈자리 여부를 읽을 수 없는 버전입니다. 안전하게 옛 방식으로 돌아갑니다.
+                    print("[알림] 좌석 상태를 읽지 못해 기본 조회 방식으로 바꿉니다.")
+                    rich_mode = False
+                    trains = fetch()
+                else:
+                    total = len(trains)
+                    trains = [t for t, s in zip(trains, states) if s]
         except Exception as exc:
             name = type(exc).__name__
             if name in ("NoResultsError", "SoldOutError"):
@@ -204,7 +276,10 @@ def main() -> int:
         if not trains:
             # 라이브러리가 에러 대신 빈 목록을 주는 경우도 있어 여기서 한 번에 찍습니다.
             # 이 줄이 없으면 대기 중에 화면이 멈춘 것처럼 보입니다.
-            print(f"[{stamp}] {attempts}회 - 빈자리 없음")
+            if total:
+                print(f"[{stamp}] {attempts}회 - 열차 {total}대 전부 매진")
+            else:
+                print(f"[{stamp}] {attempts}회 - 빈자리 없음")
 
         if trains:
             print(f"\n[{stamp}] 빈자리를 찾았습니다.")
