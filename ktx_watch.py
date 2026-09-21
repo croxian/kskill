@@ -31,11 +31,11 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # 안전장치. 명령줄로 더 공격적으로 바꿀 수 없도록 여기서 못을 박아 둡니다.
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION = "2026-09-21c"
+SCRIPT_VERSION = "2026-09-21e"
 
 MIN_INTERVAL_SEC = 30      # 조회 간격의 하한. 이보다 짧게는 절대 돌지 않습니다.
 MIN_INTERVAL_ALLDAY = 60   # --allday 는 한 번에 여러 번 요청하므로 더 길게 잡습니다.
-MAX_RUNTIME_MIN = 60       # 총 실행 시간의 상한. 밤새 돌리지 않습니다.
+MAX_RUNTIME_MIN = 720      # 총 실행 시간의 상한(12시간). 더 필요하면 다시 실행하세요.
 MAX_CONSECUTIVE_ERRORS = 3  # 에러가 이만큼 연달아 나면 멈춥니다.
 
 
@@ -115,6 +115,16 @@ def clean_time(text: str) -> str:
     return digits.ljust(6, "0")[:6]   # 06 -> 060000,  0630 -> 063000
 
 
+def to_hhmm(text: str) -> str:
+    """시각을 4자리(HHMM)로 맞춥니다. 9, 09, 0930, 09:30 전부 받습니다."""
+    digits = "".join(c for c in text if c.isdigit())
+    if not digits:
+        return ""
+    if len(digits) % 2:
+        digits = digits.zfill(len(digits) + 1)
+    return digits.ljust(4, "0")[:4]
+
+
 def ask(prompt: str, default: str = "") -> str:
     """물어보고 답을 받습니다. 그냥 엔터를 치면 기본값을 씁니다."""
     suffix = f" [{default}]" if default else ""
@@ -140,6 +150,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30,
         help=f"몇 분간 감시할지. 최대 {MAX_RUNTIME_MIN}분.",
+    )
+    p.add_argument(
+        "--at",
+        help="이 시각에 출발하는 열차만 봅니다. 쉼표로 여러 개. 예: 0928 또는 0928,1018",
+    )
+    p.add_argument(
+        "--until",
+        help="이 시각까지 출발하는 열차만 봅니다. --time 과 같이 쓰면 구간이 됩니다. 예: 1200",
     )
     p.add_argument(
         "--allday",
@@ -184,6 +202,30 @@ def main() -> int:
         print("[중단] 출발역과 도착역이 같습니다.")
         return 1
 
+    # 시간대 타겟. 셋 중 하나를 고르는 게 아니라 겹쳐 쓸 수 있습니다.
+    #   1) 날짜 전체            : --allday
+    #   2) 특정 시각 이후        : --time 0900
+    #   3) 특정 시각만          : --at 0928  (또는 --time 0900 --until 1200 으로 구간)
+    at_times = {to_hhmm(x) for x in args.at.split(",")} if args.at else set()
+    at_times.discard("")
+    until = to_hhmm(args.until) if args.until else ""
+
+    # --at 을 쓰면 그 시각부터 조회해야 합니다. 안 그러면 첫차 근처만 보고 못 찾습니다.
+    if at_times and not args.allday and args.time is None:
+        depart_time = min(at_times) + "00"
+
+    def in_target(train) -> bool:
+        """이 열차가 내가 노리는 시간대에 드는지."""
+        raw = getattr(train, "dep_time", None)
+        if not raw:
+            return True          # 출발시각을 못 읽으면 거르지 않습니다
+        hhmm = str(raw)[:4]
+        if at_times and hhmm not in at_times:
+            return False
+        if until and hhmm > until:
+            return False
+        return True
+
     korail_id = os.environ.get("KSKILL_KTX_ID")
     korail_pw = os.environ.get("KSKILL_KTX_PASSWORD")
     if not korail_id or not korail_pw:
@@ -207,6 +249,14 @@ def main() -> int:
 
     print(f"\n[설정] {dep} -> {arr}  {date} {depart_time} 이후")
     print(f"[설정] {interval}초 간격으로 최대 {minutes}분간 감시합니다.")
+    if at_times:
+        print(f"[설정] 타겟: {', '.join(sorted(at_times))} 출발 열차만")
+    elif until:
+        print(f"[설정] 타겟: {depart_time[:4]} ~ {until} 출발 열차")
+    elif args.allday:
+        print("[설정] 타겟: 하루 전체")
+    else:
+        print(f"[설정] 타겟: {depart_time[:4]} 이후 열차 (앞쪽 10여 대)")
     print(f"[설정] 예약 시도: {'예' if args.reserve else '아니오 (알림만)'}")
     print("[안내] 멈추려면 Ctrl+C 를 누르세요.\n")
 
@@ -278,13 +328,16 @@ def main() -> int:
             trains = fetch()
             errors = 0  # 성공했으니 에러 카운터를 되돌립니다.
 
+            # 노리는 시간대만 남깁니다. 요청 수를 늘리지 않고 결과만 좁힙니다.
+            trains = [t for t in trains if in_target(t)]
+
             if rich_mode:
                 states = [seat_state(t) for t in trains]
                 if trains and all(s is None for s in states):
                     # 빈자리 여부를 읽을 수 없는 버전입니다. 안전하게 옛 방식으로 돌아갑니다.
                     print("[알림] 좌석 상태를 읽지 못해 기본 조회 방식으로 바꿉니다.")
                     rich_mode = False
-                    trains = fetch()
+                    trains = [t for t in fetch() if in_target(t)]
                 else:
                     total = len(trains)
                     trains = [t for t, s in zip(trains, states) if s]
