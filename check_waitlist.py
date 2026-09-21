@@ -57,7 +57,7 @@ def load_secrets() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-SCRIPT_VERSION = "2026-09-21c"
+SCRIPT_VERSION = "2026-09-21e"
 print(f"*** check_waitlist.py 버전: {SCRIPT_VERSION} ***")
 
 import korail2
@@ -198,8 +198,27 @@ def call(train, method: str):
         return None
 
 
+# 이 라이브러리가 예약대기 여부를 알려줄 수 있는지부터 확인합니다.
+# 알려줄 수 없는데 "예약대기 0건"이라고 하면 거짓말이 됩니다.
+can_judge_wait = bool(trains) and callable(getattr(trains[0], "has_waiting_list", None))
+print("예약대기 판단 가능:", "예" if can_judge_wait else "아니오 (has_waiting_list 함수가 없음)")
+
+if trains:
+    print("\n첫 열차가 들고 있는 정보 (예약대기 관련 항목이 있는지 보세요):")
+    try:
+        for k, v in sorted(vars(trains[0]).items()):
+            print(f"    {k} = {v!r}")
+    except TypeError:
+        names = [n for n in dir(trains[0]) if not n.startswith("_")]
+        print("    " + ", ".join(names))
+print()
+
 free = 0
 waitable = 0
+soldout = 0
+unknown = 0
+hidden = []
+
 for t in trains:
     seat = call(t, "has_seat")
     wait = call(t, "has_waiting_list")
@@ -209,15 +228,28 @@ for t in trains:
     elif wait:
         mark, waitable = "[예약대기]", waitable + 1
     elif seat is None:
-        mark = "[판단불가]"
+        mark, unknown = "[판단불가]", unknown + 1
     else:
-        mark = "[매진]  "
+        mark, soldout = "[매진]  ", soldout + 1
+        if soldout > 3:
+            hidden.append(t)      # 매진은 앞의 3대만 보여줍니다
+            continue
 
     print(f"  {mark} {t}")
 
+if hidden:
+    print(f"  ... 외 {len(hidden)}대 매진 (생략)")
+
 line("4. 결론")
+print(f"조회된 열차       : {len(trains)}건")
 print(f"빈자리 있는 열차   : {free}건")
-print(f"예약대기 가능 열차 : {waitable}건")
+print(f"매진              : {soldout}건")
+if can_judge_wait:
+    print(f"예약대기 가능 열차 : {waitable}건")
+else:
+    print("예약대기 가능 열차 : 알 수 없음 (이 라이브러리가 알려주지 않습니다)")
+if unknown:
+    print(f"판단 불가         : {unknown}건")
 
 if free:
     print("\n자리가 있습니다. 지금 코레일톡으로 바로 예매하세요.")
@@ -229,6 +261,9 @@ elif waitable:
     print("  - 자리가 나면 코레일이 순서대로 배정합니다")
     print("  - 컴퓨터를 켜두거나 계속 조회할 필요가 없습니다")
     print("  - 이 경우 ktx_watch.py 는 쓰지 않으셔도 됩니다")
+elif not can_judge_wait:
+    print("\n빈자리는 없습니다. 예약대기는 이 스크립트로 확인할 수 없습니다.")
+    print("반드시 코레일톡 앱에서 직접 확인하세요. 앱에는 뜰 수 있습니다.")
 else:
     print("\n빈자리도 예약대기도 없습니다.")
     print("남은 방법은 취소표를 기다리는 것뿐입니다.")
