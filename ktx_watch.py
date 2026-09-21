@@ -31,7 +31,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # 안전장치. 명령줄로 더 공격적으로 바꿀 수 없도록 여기서 못을 박아 둡니다.
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION = "2026-09-21e"
+SCRIPT_VERSION = "2026-09-21f"
 
 MIN_INTERVAL_SEC = 30      # 조회 간격의 하한. 이보다 짧게는 절대 돌지 않습니다.
 MIN_INTERVAL_ALLDAY = 60   # --allday 는 한 번에 여러 번 요청하므로 더 길게 잡습니다.
@@ -54,6 +54,52 @@ def load_secrets() -> None:
             continue
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def prevent_sleep(keep_awake: bool = True) -> bool:
+    """Windows 가 절전으로 들어가지 않게 막습니다. 성공하면 True.
+
+    감시 중에 PC 가 자버리면 스크립트도 같이 멈춥니다. 마우스를 움직여
+    깨우기 전까지는 조회가 안 나갑니다.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if keep_awake else 0)
+        return bool(ctypes.windll.kernel32.SetThreadExecutionState(flags))
+    except Exception:
+        return False
+
+
+def disable_quick_edit() -> bool:
+    """명령 프롬프트의 '빠른 편집' 을 끕니다. 성공하면 True.
+
+    이게 켜져 있으면 창을 실수로 클릭하는 순간 프로그램이 통째로 멈춥니다.
+    Enter 나 Esc 를 눌러야 다시 돕니다.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        STD_INPUT_HANDLE = -10
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        ENABLE_EXTENDED_FLAGS = 0x0080
+
+        handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        new_mode = (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS
+        return bool(kernel32.SetConsoleMode(handle, new_mode))
+    except Exception:
+        return False
 
 
 def beep() -> None:
@@ -316,14 +362,32 @@ def main() -> int:
     if _dropped:
         print(f"[알림] 이 함수가 안 받는 옵션은 무시됩니다: {', '.join(_dropped)}")
 
+    # 감시 중에 PC 가 자거나 창 클릭으로 멈추는 것을 막습니다.
+    if sys.platform == "win32":
+        awake = prevent_sleep(True)
+        quiet = disable_quick_edit()
+        print(f"[설정] 절전 방지: {'켬' if awake else '실패 (전원 설정을 직접 바꾸세요)'}")
+        print(f"[설정] 빠른 편집 끔: {'예' if quiet else '실패 (창을 클릭하지 마세요)'}")
+
     attempts = 0
     errors = 0
+    last_cycle = None
 
     while time.time() < deadline:
+        cycle_start = time.monotonic()
+
+        # 지난 주기가 설정보다 크게 길었으면 뭔가 멈췄던 것입니다.
+        if last_cycle is not None:
+            gap = cycle_start - last_cycle
+            if gap > interval * 2:
+                print(f"[알림] 지난 주기가 {gap:.0f}초 걸렸습니다 (설정 {interval}초).")
+        last_cycle = cycle_start
+
         attempts += 1
         stamp = time.strftime("%H:%M:%S")
 
         total = None
+        fetch_start = time.monotonic()
         try:
             trains = fetch()
             errors = 0  # 성공했으니 에러 카운터를 되돌립니다.
@@ -355,6 +419,10 @@ def main() -> int:
                     return 1
                 trains = []
 
+        took = time.monotonic() - fetch_start
+        if took > 15:
+            print(f"    (이번 조회에 {took:.0f}초 걸렸습니다. 서버가 느립니다)")
+
         if not trains:
             # 라이브러리가 에러 대신 빈 목록을 주는 경우도 있어 여기서 한 번에 찍습니다.
             # 이 줄이 없으면 대기 중에 화면이 멈춘 것처럼 보입니다.
@@ -385,10 +453,23 @@ def main() -> int:
             print("       코레일톡 앱에서 제한시간(보통 10분) 안에 결제하세요.")
             return 0
 
-        # 다음 조회까지 대기. 남은 시간이 간격보다 짧으면 그냥 끝냅니다.
-        if time.time() + interval >= deadline:
+        # 다음 조회까지 대기. 조회에 걸린 시간을 빼서 주기를 일정하게 맞춥니다.
+        # (이걸 안 하면 "조회 6분 + 대기 30초" 가 되어 주기가 점점 늘어집니다)
+        wait = interval - (time.monotonic() - cycle_start)
+        if wait < 0:
+            wait = 0
+        if time.time() + wait >= deadline:
             break
-        time.sleep(interval)
+        if wait:
+            sleep_start = time.monotonic()
+            time.sleep(wait)
+            # sleep 은 정확합니다. 실제로 더 걸렸다면 프로세스가 멈춰 있던 겁니다.
+            frozen = (time.monotonic() - sleep_start) - wait
+            if frozen > 5:
+                print(f"[알림] 대기 중 {frozen:.0f}초 동안 멈춰 있었습니다.")
+                print("       조회가 느린 게 아니라 프로그램이 얼어붙은 것입니다.")
+                print("       창 제목에 '선택' 이 떠 있었다면 빠른 편집 모드 때문입니다.")
+                print("       창을 클릭하지 마시고, 클릭했다면 Esc 를 누르세요.")
 
     print(f"\n[종료] {minutes}분 동안 빈자리를 찾지 못했습니다. (총 {attempts}회 조회)")
     return 0
@@ -400,3 +481,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[종료] 사용자가 중단했습니다.")
         sys.exit(130)
+    finally:
+        prevent_sleep(False)   # 절전 방지를 원래대로 돌려놓습니다
