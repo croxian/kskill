@@ -69,6 +69,22 @@ def beep() -> None:
         pass
 
 
+def keep_supported(fn, candidates: dict) -> dict:
+    """fn 이 실제로 받는 인자만 남깁니다.
+
+    search_train 과 search_train_allday 는 받는 인자가 서로 다릅니다.
+    한쪽 기준으로 만든 인자를 다른 쪽에 그대로 넘기면 TypeError 가 납니다.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return dict(candidates)
+    # **kwargs 를 받는 함수면 전부 통과시킵니다.
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(candidates)
+    return {k: v for k, v in candidates.items() if k in params}
+
+
 def clean_station(name: str) -> str:
     """역 이름을 다듬습니다. '서울역' 처럼 뒤에 '역'을 붙여도 받아줍니다."""
     name = name.strip()
@@ -230,12 +246,21 @@ def main() -> int:
             return None
 
     def fetch():
-        kwargs = dict(extra)
+        wanted = dict(extra)
         if rich_mode:
-            kwargs["include_no_seats"] = True
-        if use_allday:
-            return korail.search_train_allday(dep, arr, date, depart_time, **kwargs)
-        return korail.search_train(dep, arr, date, depart_time, **kwargs)
+            wanted["include_no_seats"] = True
+        fn = korail.search_train_allday if use_allday else korail.search_train
+        # 함수마다 받는 인자가 다릅니다. 안 받는 건 빼고 부릅니다.
+        return fn(dep, arr, date, depart_time, **keep_supported(fn, wanted))
+
+    # 요청한 옵션이 실제로 먹는지 시작할 때 한 번 확인해 알려줍니다.
+    _fn = korail.search_train_allday if use_allday else korail.search_train
+    _wanted = dict(extra)
+    if rich_mode:
+        _wanted["include_no_seats"] = True
+    _dropped = sorted(set(_wanted) - set(keep_supported(_fn, _wanted)))
+    if _dropped:
+        print(f"[알림] 이 함수가 안 받는 옵션은 무시됩니다: {', '.join(_dropped)}")
 
     attempts = 0
     errors = 0

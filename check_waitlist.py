@@ -22,6 +22,22 @@ import os
 from pathlib import Path
 
 
+def keep_supported(fn, candidates: dict) -> dict:
+    """fn 이 실제로 받는 인자만 남깁니다.
+
+    search_train 과 search_train_allday 는 받는 인자가 서로 다릅니다.
+    한쪽 기준으로 만든 인자를 다른 쪽에 그대로 넘기면 TypeError 가 납니다.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return dict(candidates)
+    # **kwargs 를 받는 함수면 전부 통과시킵니다.
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(candidates)
+    return {k: v for k, v in candidates.items() if k in params}
+
+
 def line(title: str) -> None:
     print("\n" + "=" * 64)
     print(title)
@@ -48,6 +64,11 @@ line("1. 라이브러리가 지원하는 기능")
 
 has_allday = hasattr(Korail, "search_train_allday")
 print("하루 전체 조회 (search_train_allday):", "있음" if has_allday else "없음")
+if has_allday:
+    try:
+        print("  search_train_allday", inspect.signature(Korail.search_train_allday))
+    except Exception as exc:
+        print("  시그니처 확인 실패:", exc)
 
 print("\nreserve 가 받는 인자:")
 try:
@@ -96,17 +117,22 @@ date = raw_date[:8] if len(raw_date) >= 8 else (dt.date.today() + dt.timedelta(d
 
 print(f"\n{dep} -> {arr}  {date}  (첫차부터 끝차까지)\n")
 
-kwargs = {"include_no_seats": True}
-# 예약대기 인자를 받는 버전이면 같이 켭니다.
-if "include_waiting_list" in inspect.signature(Korail.search_train).parameters:
-    kwargs["include_waiting_list"] = True
+# 쓰고 싶은 인자를 먼저 적어두고, 실제로 부를 함수가 받는 것만 골라 씁니다.
+wanted = {"include_no_seats": True, "include_waiting_list": True}
+
+fn = korail.search_train_allday if has_allday else korail.search_train
+kwargs = keep_supported(fn, wanted)
+
+dropped = sorted(set(wanted) - set(kwargs))
+asked_waiting = "include_waiting_list" in kwargs
+if dropped:
+    print(f"(이 함수가 안 받는 인자는 뺐습니다: {', '.join(dropped)})")
+if not has_allday:
+    print("(하루 전체 조회가 없어 앞쪽 일부만 보입니다)")
+print()
 
 try:
-    if has_allday:
-        trains = korail.search_train_allday(dep, arr, date, "000000", **kwargs)
-    else:
-        trains = korail.search_train(dep, arr, date, "000000", **kwargs)
-        print("(하루 전체 조회가 없어 앞쪽 일부만 보입니다)\n")
+    trains = fn(dep, arr, date, "000000", **kwargs)
 except Exception as exc:
     print(f"[실패] {type(exc).__name__}: {exc}")
     raise SystemExit(1)
@@ -155,5 +181,10 @@ elif waitable:
 else:
     print("\n빈자리도 예약대기도 없습니다.")
     print("ktx_watch.py 로 취소표를 감시하거나, 다른 날짜/시간대를 보세요.")
+
+if not asked_waiting:
+    print("\n[주의] 이 조회는 예약대기 열차를 빼고 가져왔을 수 있습니다.")
+    print("       (search_train_allday 가 include_waiting_list 를 안 받습니다)")
+    print("       예약대기 가능 여부는 코레일톡 앱에서 확인하는 것이 정확합니다.")
 
 print("\n위 출력을 전부 복사해서 보여주시면 더 도와드릴 수 있습니다.")
