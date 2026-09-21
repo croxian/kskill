@@ -19,6 +19,7 @@ import datetime as dt
 import getpass
 import inspect
 import os
+import time
 from pathlib import Path
 
 
@@ -120,22 +121,65 @@ date = raw_date[:8] if len(raw_date) >= 8 else (dt.date.today() + dt.timedelta(d
 
 print(f"\n{dep} -> {arr}  {date}  (첫차부터 끝차까지)\n")
 
-# 쓰고 싶은 인자를 먼저 적어두고, 실제로 부를 함수가 받는 것만 골라 씁니다.
-wanted = {"include_no_seats": True, "include_waiting_list": True}
+def sweep_day(max_calls: int = 15, pause: float = 1.0):
+    """search_train 을 시각을 옮겨가며 여러 번 불러 하루를 훑습니다.
 
-fn = korail.search_train_allday if has_allday else korail.search_train
-kwargs = keep_supported(fn, wanted)
+    search_train_allday 는 한 번에 끝나지만 include_waiting_list 를 안 받습니다.
+    예약대기 정보를 보려면 include_waiting_list 를 받는 search_train 을 써야 하고,
+    그건 한 번에 10여 대만 주므로 이렇게 나눠 부릅니다.
+    """
+    seen = {}
+    order = []
+    cur = "000000"
+    for _ in range(max_calls):
+        try:
+            batch = korail.search_train(
+                dep, arr, date, cur,
+                include_no_seats=True, include_waiting_list=True,
+            )
+        except Exception as exc:
+            if type(exc).__name__ in ("NoResultsError", "SoldOutError"):
+                break
+            raise
+        if not batch:
+            break
 
-dropped = sorted(set(wanted) - set(kwargs))
-asked_waiting = "include_waiting_list" in kwargs
-if dropped:
-    print(f"(이 함수가 안 받는 인자는 뺐습니다: {', '.join(dropped)})")
-if not has_allday:
-    print("(하루 전체 조회가 없어 앞쪽 일부만 보입니다)")
-print()
+        fresh = 0
+        for t in batch:
+            key = (getattr(t, "train_no", None), getattr(t, "dep_time", None), str(t))
+            if key not in seen:
+                seen[key] = t
+                order.append(t)
+                fresh += 1
+
+        print(f"  ... {cur[:2]}:{cur[2:4]} 이후 {len(batch)}건 (누적 {len(order)}건)")
+        last = getattr(batch[-1], "dep_time", None)
+        if not last or fresh == 0:
+            break                      # 더 나아가지 못하면 멈춥니다
+        cur = f"{int(last) + 1:06d}"   # 마지막 열차 1초 뒤부터 이어서
+        if cur >= "240000":
+            break
+        time.sleep(pause)              # 연속 요청 사이에 한 박자 쉽니다
+    return order
+
+
+search_params = inspect.signature(Korail.search_train).parameters
+can_ask_waiting = "include_waiting_list" in search_params
+asked_waiting = can_ask_waiting
 
 try:
-    trains = fn(dep, arr, date, "000000", **kwargs)
+    if can_ask_waiting:
+        print("예약대기 정보를 보려면 나눠서 조회해야 합니다. 잠시 걸립니다...\n")
+        trains = sweep_day()
+    elif has_allday:
+        print("(이 버전은 예약대기 조회를 지원하지 않습니다)\n")
+        trains = korail.search_train_allday(
+            dep, arr, date, "000000",
+            **keep_supported(korail.search_train_allday, {"include_no_seats": True}),
+        )
+    else:
+        print("(하루 전체 조회가 없어 앞쪽 일부만 보입니다)\n")
+        trains = korail.search_train(dep, arr, date, "000000", include_no_seats=True)
 except Exception as exc:
     print(f"[실패] {type(exc).__name__}: {exc}")
     raise SystemExit(1)
@@ -178,12 +222,19 @@ print(f"예약대기 가능 열차 : {waitable}건")
 if free:
     print("\n자리가 있습니다. 지금 코레일톡으로 바로 예매하세요.")
 elif waitable:
-    print("\n빈자리는 없지만 예약대기를 걸 수 있는 열차가 있습니다.")
-    print("코레일톡 앱에서 예약대기를 신청하는 편이 가장 확실합니다.")
-    print("줄을 서두면 자리가 나올 때 코레일이 배정해 줍니다.")
+    print(f"\n빈자리는 없지만 예약대기를 걸 수 있는 열차가 {waitable}건 있습니다.")
+    print("위 목록에서 [예약대기] 표시된 열차를 코레일톡 앱에서 찾아 신청하세요.")
+    print("")
+    print("예약대기는 코레일 공식 대기열입니다.")
+    print("  - 자리가 나면 코레일이 순서대로 배정합니다")
+    print("  - 컴퓨터를 켜두거나 계속 조회할 필요가 없습니다")
+    print("  - 이 경우 ktx_watch.py 는 쓰지 않으셔도 됩니다")
 else:
     print("\n빈자리도 예약대기도 없습니다.")
-    print("ktx_watch.py 로 취소표를 감시하거나, 다른 날짜/시간대를 보세요.")
+    print("남은 방법은 취소표를 기다리는 것뿐입니다.")
+    print("  - 코레일톡 앱에도 예약대기가 안 뜨는지 한 번 확인해 보세요")
+    print("  - 다른 날짜, 다른 시간대, 구포/밀양 같은 중간역도 보세요")
+    print("  - ktx_watch.py --allday 로 취소표를 감시할 수 있습니다")
 
 if not asked_waiting:
     print("\n[주의] 이 조회는 예약대기 열차를 빼고 가져왔을 수 있습니다.")
