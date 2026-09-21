@@ -17,6 +17,7 @@ ktx_watch.py - KTX 빈자리 감시 (개인용)
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import sys
 import time
@@ -62,12 +63,48 @@ def beep() -> None:
         pass
 
 
+def clean_station(name: str) -> str:
+    """역 이름을 다듬습니다. '서울역' 처럼 뒤에 '역'을 붙여도 받아줍니다."""
+    name = name.strip()
+    if len(name) > 2 and name.endswith("역"):
+        name = name[:-1]
+    return name
+
+
+def clean_date(text: str) -> str:
+    """날짜를 8자리로 맞춥니다. 2026-09-25, 2026.09.25, 0925 전부 받습니다."""
+    digits = "".join(c for c in text if c.isdigit())
+    if not digits:
+        return (dt.date.today() + dt.timedelta(days=1)).strftime("%Y%m%d")
+    if len(digits) == 4:
+        return f"{dt.date.today().year}{digits}"   # 월일만 적으면 올해를 붙입니다
+    return digits[:8]
+
+
+def clean_time(text: str) -> str:
+    """시각을 6자리로 맞춥니다. 6, 06, 0600, 06:00 전부 060000 이 됩니다."""
+    digits = "".join(c for c in text if c.isdigit())
+    if not digits:
+        return "000000"
+    if len(digits) % 2:               # 6 -> 06,  630 -> 0630
+        digits = digits.zfill(len(digits) + 1)
+    return digits.ljust(6, "0")[:6]   # 06 -> 060000,  0630 -> 063000
+
+
+def ask(prompt: str, default: str = "") -> str:
+    """물어보고 답을 받습니다. 그냥 엔터를 치면 기본값을 씁니다."""
+    suffix = f" [{default}]" if default else ""
+    return input(f"{prompt}{suffix}: ").strip() or default
+
+
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="KTX 빈자리 감시 (개인용)")
-    p.add_argument("--dep", required=True, help="출발역. 예: 서울")
-    p.add_argument("--arr", required=True, help="도착역. 예: 부산")
-    p.add_argument("--date", required=True, help="날짜 8자리. 예: 20260925")
-    p.add_argument("--time", default="000000", help="이 시각 이후로 검색. 6자리. 예: 060000")
+    p = argparse.ArgumentParser(
+        description="KTX 빈자리 감시 (개인용). 인자 없이 실행하면 하나씩 물어봅니다."
+    )
+    p.add_argument("--dep", help="출발역. 예: 서울")
+    p.add_argument("--arr", help="도착역. 예: 부산")
+    p.add_argument("--date", help="날짜. 예: 20260925")
+    p.add_argument("--time", help="이 시각 이후로 검색. 예: 060000")
     p.add_argument(
         "--interval",
         type=int,
@@ -92,6 +129,25 @@ def main() -> int:
     args = parse_args()
     load_secrets()
 
+    # 명령줄로 안 준 값은 여기서 직접 물어봅니다.
+    interactive = args.dep is None or args.arr is None or args.date is None
+    if interactive:
+        print("KTX 빈자리 감시. 그냥 엔터를 치면 [] 안의 값을 씁니다.\n")
+    tomorrow = (dt.date.today() + dt.timedelta(days=1)).strftime("%Y%m%d")
+    dep = clean_station(args.dep or ask("출발역", "서울"))
+    arr = clean_station(args.arr or ask("도착역", "부산"))
+    date = clean_date(args.date or ask("날짜 (예: 20260925)", tomorrow))
+    if args.time is not None:
+        depart_time = clean_time(args.time)
+    elif interactive:
+        depart_time = clean_time(ask("몇 시 이후 (예: 06)", "000000"))
+    else:
+        depart_time = "000000"
+
+    if dep == arr:
+        print("[중단] 출발역과 도착역이 같습니다.")
+        return 1
+
     korail_id = os.environ.get("KSKILL_KTX_ID")
     korail_pw = os.environ.get("KSKILL_KTX_PASSWORD")
     if not korail_id or not korail_pw:
@@ -113,7 +169,7 @@ def main() -> int:
     minutes = min(args.minutes, MAX_RUNTIME_MIN)
     deadline = time.time() + minutes * 60
 
-    print(f"[설정] {args.dep} -> {args.arr}  {args.date} {args.time} 이후")
+    print(f"\n[설정] {dep} -> {arr}  {date} {depart_time} 이후")
     print(f"[설정] {interval}초 간격으로 최대 {minutes}분간 감시합니다.")
     print(f"[설정] 예약 시도: {'예' if args.reserve else '아니오 (알림만)'}")
     print("[안내] 멈추려면 Ctrl+C 를 누르세요.\n")
@@ -129,13 +185,12 @@ def main() -> int:
         stamp = time.strftime("%H:%M:%S")
 
         try:
-            trains = korail.search_train(args.dep, args.arr, args.date, args.time)
+            trains = korail.search_train(dep, arr, date, depart_time)
             errors = 0  # 성공했으니 에러 카운터를 되돌립니다.
         except Exception as exc:
             name = type(exc).__name__
             if name in ("NoResultsError", "SoldOutError"):
                 # 매진입니다. 정상적인 상황이므로 에러로 세지 않습니다.
-                print(f"[{stamp}] {attempts}회 - 빈자리 없음")
                 trains = []
             else:
                 errors += 1
@@ -145,6 +200,11 @@ def main() -> int:
                     print("       비밀번호, 역 이름, 날짜를 다시 확인해 주세요.")
                     return 1
                 trains = []
+
+        if not trains:
+            # 라이브러리가 에러 대신 빈 목록을 주는 경우도 있어 여기서 한 번에 찍습니다.
+            # 이 줄이 없으면 대기 중에 화면이 멈춘 것처럼 보입니다.
+            print(f"[{stamp}] {attempts}회 - 빈자리 없음")
 
         if trains:
             print(f"\n[{stamp}] 빈자리를 찾았습니다.")
