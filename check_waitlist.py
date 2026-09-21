@@ -56,6 +56,9 @@ def load_secrets() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+SCRIPT_VERSION = "2026-09-21c"
+print(f"*** check_waitlist.py 버전: {SCRIPT_VERSION} ***")
+
 import korail2
 from korail2 import Korail
 

@@ -16,6 +16,9 @@ import sys
 from pathlib import Path
 
 
+SCRIPT_VERSION = "2026-09-21c"
+print(f"*** check_ktx.py 버전: {SCRIPT_VERSION} ***")
+
 def line(title: str) -> None:
     print("\n" + "=" * 60)
     print(title)

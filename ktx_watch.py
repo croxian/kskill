@@ -31,6 +31,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # 안전장치. 명령줄로 더 공격적으로 바꿀 수 없도록 여기서 못을 박아 둡니다.
 # ---------------------------------------------------------------------------
+SCRIPT_VERSION = "2026-09-21c"
+
 MIN_INTERVAL_SEC = 30      # 조회 간격의 하한. 이보다 짧게는 절대 돌지 않습니다.
 MIN_INTERVAL_ALLDAY = 60   # --allday 는 한 번에 여러 번 요청하므로 더 길게 잡습니다.
 MAX_RUNTIME_MIN = 60       # 총 실행 시간의 상한. 밤새 돌리지 않습니다.
@@ -158,6 +160,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    print(f"*** ktx_watch.py 버전: {SCRIPT_VERSION} ***")
+
     args = parse_args()
     load_secrets()
 
