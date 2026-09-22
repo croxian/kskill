@@ -39,14 +39,30 @@ fi
 
 say "3/6 파일 복사"
 mkdir -p "$PREFIX"
+BACKUPS=()
 for f in ktx_bot.py ktx_watch.py; do
   if [ ! -f "$SRC_DIR/$f" ]; then
     echo "[중단] $SRC_DIR/$f 이 없습니다. 레포 폴더 안에서 실행하세요." >&2
     exit 1
   fi
+  # 도는 쪽 파일이 원본과 다르면(= 누가 직접 고쳤으면) 백업부터 남깁니다.
+  # 예전에는 그냥 덮어써서 직접 고친 내용이 사라졌습니다.
+  if [ -f "$PREFIX/$f" ] && ! cmp -s "$SRC_DIR/$f" "$PREFIX/$f"; then
+    backup="$PREFIX/$f.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -p "$PREFIX/$f" "$backup"
+    BACKUPS+=("$backup")
+  fi
   install -m 0644 "$SRC_DIR/$f" "$PREFIX/$f"
   info "$f"
 done
+
+if [ ${#BACKUPS[@]} -gt 0 ]; then
+  echo
+  info "직접 고쳐져 있던 파일을 덮어썼습니다. 원래 내용은 백업해 뒀습니다:"
+  for b in "${BACKUPS[@]}"; do info "  $b"; done
+  info "되살리려면:  sudo cp <백업파일> $PREFIX/<원래이름>"
+  info "계속 남길 수정은 $PREFIX 가 아니라 git 저장소 쪽에서 하세요."
+fi
 
 say "4/6 파이썬 라이브러리 설치"
 if [ ! -x "$PREFIX/venv/bin/python" ]; then
