@@ -265,6 +265,116 @@ python ktx_bot.py     # PC 에서 켜 두고 그대로 둡니다
 - PC 가 꺼지거나 봇을 닫으면 감시도 멈춥니다. 휴대폰이 대신 돌리는 게
   아니라, PC 에게 시키는 리모컨입니다.
 
+## 클라우드 서버에 올리기
+
+PC 를 아예 안 켜도 되게 하려면 서버에 올립니다. 봇이 24시간 떠 있고,
+휴대폰으로만 조종합니다.
+
+### 먼저 알아둘 것
+
+- **코레일이 해외 IP 나 데이터센터 IP 를 어떻게 대하는지 저는 모릅니다.**
+  차단될 수도, 아무 문제 없을 수도 있습니다. **한국 리전**(서울/춘천)을
+  고르면 위험이 줄어듭니다. 해외 리전은 피하세요.
+- 무료로 쓰려면 Oracle Cloud Free Tier 가 현실적입니다. 가입에 카드 등록이
+  필요하고(과금은 안 됨), ARM 인스턴스는 자리가 없을 때가 잦습니다.
+- 유료로 편하게 가려면 국내 VPS 나 Vultr 서울 리전이 월 5~6천원 수준입니다.
+
+### 1. 서버 만들기
+
+Oracle Cloud 기준입니다.
+
+| 항목 | 고를 값 |
+|---|---|
+| Region | **South Korea Central (Chuncheon)** 또는 Seoul |
+| Image | Ubuntu 24.04 |
+| Shape | VM.Standard.A1.Flex (Always Free) — 1 OCPU / 6GB 면 충분 |
+| SSH key | **새로 생성해서 개인키를 내려받으세요** |
+
+비밀번호 로그인은 쓰지 마세요. SSH 키만 씁니다.
+
+### 2. 접속하기
+
+Windows PowerShell 에서 (cmd 아님):
+
+```powershell
+ssh -i C:\Users\user\Downloads\받은키.key ubuntu@서버IP
+```
+
+`Permissions ... too open` 오류가 나면:
+
+```powershell
+icacls C:\Users\user\Downloads\받은키.key /inheritance:r /grant:r "$env:USERNAME:R"
+```
+
+### 3. 설치
+
+서버에 접속한 상태에서 그대로 붙여넣으세요.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone -b claude/intelligent-meitner-0i7sgd https://github.com/croxian/kskill.git
+cd kskill
+sudo bash deploy/setup-ubuntu.sh
+```
+
+하는 일: 파이썬 설치 → 로그인 불가능한 전용 계정 `ktxbot` 생성 →
+`/opt/ktx-bot` 에 파일 배치 → 가상환경에 `korail2-ncard` 설치 →
+비밀 파일 양식 생성(권한 600) → systemd 서비스 등록.
+
+여러 번 실행해도 안전하고, **채워둔 비밀 파일은 절대 덮어쓰지 않습니다.**
+
+### 4. 비밀 값 채우기
+
+```bash
+sudo nano /opt/ktx-bot/.config/k-skill/secrets.env
+```
+
+네 줄을 채우고 `Ctrl+O` → `Enter` → `Ctrl+X`.
+
+```
+KSKILL_KTX_ID=코레일아이디
+KSKILL_KTX_PASSWORD=비밀번호
+KSKILL_TELEGRAM_TOKEN=봇토큰
+KSKILL_TELEGRAM_CHAT_ID=내chat_id
+```
+
+### 5. 시작
+
+```bash
+sudo systemctl start ktx-bot
+sudo systemctl status ktx-bot      # active (running) 이면 성공
+```
+
+텔레그램에 "봇이 켜졌습니다" 가 오면 끝입니다. 이제 휴대폰에서
+`/watch` 로 조종하세요. PC 는 꺼도 됩니다.
+
+### 운영
+
+```bash
+sudo journalctl -u ktx-bot -f      # 실시간 로그 (Ctrl+C 로 빠져나오기)
+sudo systemctl restart ktx-bot     # 다시 시작
+sudo systemctl stop ktx-bot        # 멈추기
+sudo systemctl disable ktx-bot     # 재부팅 시 자동 시작 끄기
+```
+
+코드가 바뀌었을 때 갱신:
+
+```bash
+cd ~/kskill && git pull
+sudo bash deploy/setup-ubuntu.sh
+sudo systemctl restart ktx-bot
+```
+
+### 보안
+
+- 봇은 **받는 포트가 없습니다.** 텔레그램으로 나가기만 합니다. 방화벽을
+  열 필요가 없고, 밖에서 서버로 들어올 경로도 없습니다.
+- 전용 계정 `ktxbot` 은 로그인이 불가능하고, systemd 설정에서 읽기·쓰기를
+  `/opt/ktx-bot` 으로 제한했습니다.
+- 비밀 파일은 권한 600, 해당 계정만 읽습니다.
+- 봇은 `secrets.env` 의 chat_id 하나에서 온 명령만 받습니다.
+- 죽으면 30초 뒤 자동으로 되살아나고, 재부팅해도 자동으로 켜집니다.
+
 ### 감시 중 멈출 때
 
 `[알림] 대기 중 N초 동안 멈춰 있었습니다` 가 뜨면 프로그램이 얼어붙은 것입니다.

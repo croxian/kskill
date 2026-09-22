@@ -1,0 +1,39 @@
+[Unit]
+Description=KTX 빈자리 감시 텔레그램 봇
+Documentation=https://github.com/croxian/kskill
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ktxbot
+Group=ktxbot
+WorkingDirectory=/opt/ktx-bot
+
+# 스크립트는 ~/.config/k-skill/secrets.env 를 읽습니다.
+# HOME 을 /opt/ktx-bot 으로 잡아 그 안에서 찾게 합니다.
+Environment=HOME=/opt/ktx-bot
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/opt/ktx-bot/venv/bin/python /opt/ktx-bot/ktx_bot.py
+
+# 죽으면 30초 뒤 되살립니다. 네트워크가 끊겼다 붙는 경우를 대비합니다.
+Restart=always
+RestartSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ktx-bot
+
+# 권한 최소화. 봇은 외부로 나가기만 하고 받는 포트가 없습니다.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/opt/ktx-bot
+
+[Install]
+WantedBy=multi-user.target
