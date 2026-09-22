@@ -63,11 +63,15 @@ def load_secrets() -> None:
 TELEGRAM_TIMEOUT = 10   # 초. 알림이 안 가도 감시는 계속돼야 합니다.
 
 
-def telegram_call(token: str, method: str, params: dict) -> dict:
-    """텔레그램 API 를 부릅니다. 실패하면 예외를 던집니다."""
+def telegram_call(token: str, method: str, params: dict, timeout: int | None = None) -> dict:
+    """텔레그램 API 를 부릅니다. 실패하면 예외를 던집니다.
+
+    timeout 을 따로 주면 그 값을 씁니다. 롱폴링(getUpdates)처럼 오래
+    기다려야 하는 호출에 필요합니다.
+    """
     url = f"https://api.telegram.org/bot{token}/{method}"
     data = urllib.parse.urlencode(params).encode("utf-8")
-    with urllib.request.urlopen(url, data=data, timeout=TELEGRAM_TIMEOUT) as resp:
+    with urllib.request.urlopen(url, data=data, timeout=timeout or TELEGRAM_TIMEOUT) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
