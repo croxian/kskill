@@ -203,7 +203,10 @@ def beep() -> None:
             for _ in range(3):
                 winsound.Beep(880, 300)
                 time.sleep(0.1)
-        else:
+        elif sys.stdout.isatty():
+            # 터미널에서 직접 보고 있을 때만 소리를 냅니다.
+            # 서비스로 돌 때 출력은 journald 로 가므로, 여기서 찍으면
+            # 소리는 안 나고 로그에 제어문자만 남습니다.
             print("\a", end="", flush=True)
     except Exception:
         pass
