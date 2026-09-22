@@ -348,6 +348,48 @@ sudo systemctl status ktx-bot      # active (running) 이면 성공
 텔레그램에 "봇이 켜졌습니다" 가 오면 끝입니다. 이제 휴대폰에서
 `/watch` 로 조종하세요. PC 는 꺼도 됩니다.
 
+### 코드는 어디서 고치나
+
+파일이 세 군데 있습니다. 헷갈리기 쉬운 부분입니다.
+
+| 위치 | 역할 |
+|---|---|
+| 내 PC 바탕화면 | 로컬 테스트용. **서버와 무관** |
+| 서버 `~/kskill/` | git 으로 받은 **원본**. 여기서 고칩니다 |
+| 서버 `/opt/ktx-bot/` | 실제로 도는 **복사본**. 직접 고치지 마세요 |
+
+설치 스크립트가 `~/kskill/` → `/opt/ktx-bot/` 으로 복사합니다. 그래서
+`~/kskill/` 만 고치면 서버 동작은 그대로입니다. 반드시 반영 과정이 필요합니다.
+
+**갱신은 한 줄로 끝납니다.**
+
+```bash
+cd ~/kskill && bash deploy/update.sh
+```
+
+최신 코드 받기 → `/opt/ktx-bot` 반영 → 봇 재시작까지 합니다. `sudo` 를 앞에
+붙이지 마세요. 필요한 부분에서만 알아서 씁니다.
+
+직접 고친 파일이 있으면 받아오기 전에 멈추고 알려줍니다.
+
+```
+이 폴더에서 직접 고친 파일이 있습니다:
+  ktx_watch.py
+
+  내 수정을 살리려면 : git stash
+  내 수정을 버리려면 : git checkout .
+```
+
+**급할 때만** 쓰는 방법 — 도는 파일을 바로 고치기:
+
+```bash
+sudo nano /opt/ktx-bot/ktx_watch.py
+sudo systemctl restart ktx-bot
+```
+
+빠르지만 **다음에 `update.sh` 를 돌리면 덮어써집니다.** 상수 하나 바꿔
+시험해 볼 때만 쓰고, 계속 남길 수정은 `~/kskill/` 에서 하세요.
+
 ### 운영
 
 ```bash
@@ -357,12 +399,10 @@ sudo systemctl stop ktx-bot        # 멈추기
 sudo systemctl disable ktx-bot     # 재부팅 시 자동 시작 끄기
 ```
 
-코드가 바뀌었을 때 갱신:
+코드가 바뀌었을 때 갱신 (위 "코드는 어디서 고치나" 참고):
 
 ```bash
-cd ~/kskill && git pull
-sudo bash deploy/setup-ubuntu.sh
-sudo systemctl restart ktx-bot
+cd ~/kskill && bash deploy/update.sh
 ```
 
 ### 보안
