@@ -34,6 +34,7 @@ API 키는 프록시 서버 쪽에서 관리합니다.
 | 스킬 | 필요한 값 | 발급처 |
 |---|---|---|
 | `srt-booking` | `KSKILL_SRT_ID`, `KSKILL_SRT_PASSWORD` | [etk.srail.kr](https://etk.srail.kr) 계정 |
+| `ktx_watch.py` 알림 | `KSKILL_TELEGRAM_TOKEN`, `KSKILL_TELEGRAM_CHAT_ID` | 텔레그램 @BotFather (선택) |
 | `ktx-booking` | `KSKILL_KTX_ID`, `KSKILL_KTX_PASSWORD` | [letskorail.com](https://www.letskorail.com) 계정 |
 
 `~/.config/k-skill/secrets.env` 를 **직접 편집해서** 채우세요.
@@ -175,6 +176,48 @@ python ktx_watch.py --dep 서울 --arr 부산 --date 20260923 --time 0900 --unti
 노리는 열차를 `--at` 으로 좁히는 편이 실제로 더 효과적입니다.
 요청 한 번에 원하는 열차만 보므로, 30초 간격이어도 `--allday` 5초 간격보다
 그 열차에 대해서는 반응이 빠릅니다.
+
+### 텔레그램 알림
+
+자리를 찾거나 예약에 성공하면 휴대폰으로 알려줍니다. PC 앞에 없어도 됩니다.
+
+**1. 봇 만들기** — 텔레그램에서 `@BotFather` 검색 → 대화 시작 → `/newbot` →
+이름과 아이디를 정하면 토큰을 줍니다.
+
+**2. 토큰 저장** — `secrets.env` 에 추가합니다.
+
+```
+KSKILL_TELEGRAM_TOKEN=받은토큰
+```
+
+**3. 봇에게 말 걸기** — 방금 만든 봇을 찾아 아무 말이나 한 마디 보냅니다.
+이걸 안 하면 봇이 먼저 말을 걸 수 없습니다.
+
+**4. chat_id 찾기**
+
+```bash
+python ktx_watch.py --telegram-setup
+```
+
+출력된 `KSKILL_TELEGRAM_CHAT_ID=...` 줄을 `secrets.env` 에 추가합니다.
+
+**5. 확인**
+
+```bash
+python ktx_watch.py --telegram-test
+```
+
+휴대폰에 메시지가 오면 끝입니다. 이후 감시는 평소대로 실행하면 됩니다.
+
+| 언제 | 보내는 내용 |
+|---|---|
+| 빈자리 발견 (알림 모드) | 열차 목록 + 바로 예매하라는 안내 |
+| 예약 성공 (`--reserve`) | 예약번호 + **10분 안에 결제** 경고 |
+| 예약 실패 | 실패 사유 |
+| 에러 3회로 중단 | 마지막 오류 |
+
+알림이 실패해도 감시와 예약은 그대로 진행되고, 결과는 화면에 남습니다.
+잠시 끄려면 `--no-telegram` 을 붙이세요.
 
 ### 감시 중 멈출 때
 

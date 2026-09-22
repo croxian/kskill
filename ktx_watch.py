@@ -23,15 +23,19 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import inspect
+import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # 안전장치. 명령줄로 더 공격적으로 바꿀 수 없도록 여기서 못을 박아 둡니다.
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION = "2026-09-21f"
+SCRIPT_VERSION = "2026-09-22a"
 
 MIN_INTERVAL_SEC = 30      # 조회 간격의 하한. 이보다 짧게는 절대 돌지 않습니다.
 MIN_INTERVAL_ALLDAY = 60   # --allday 는 한 번에 여러 번 요청하므로 더 길게 잡습니다.
@@ -54,6 +58,90 @@ def load_secrets() -> None:
             continue
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+TELEGRAM_TIMEOUT = 10   # 초. 알림이 안 가도 감시는 계속돼야 합니다.
+
+
+def telegram_call(token: str, method: str, params: dict) -> dict:
+    """텔레그램 API 를 부릅니다. 실패하면 예외를 던집니다."""
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    data = urllib.parse.urlencode(params).encode("utf-8")
+    with urllib.request.urlopen(url, data=data, timeout=TELEGRAM_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def scrub(text: str, token: str) -> str:
+    """오류 메시지에 토큰이 섞여 있으면 지웁니다."""
+    if token and token in text:
+        text = text.replace(token, "<토큰가림>")
+    return text
+
+
+def telegram_send(token: str, chat_id: str, text: str) -> tuple[bool, str]:
+    """메시지를 보냅니다. (성공여부, 실패이유) 를 돌려줍니다.
+
+    알림이 실패해도 감시나 예약은 절대 멈추지 않습니다.
+    """
+    if not token or not chat_id:
+        return False, "토큰이나 chat_id 가 없습니다"
+    try:
+        result = telegram_call(token, "sendMessage", {"chat_id": chat_id, "text": text})
+        if result.get("ok"):
+            return True, ""
+        return False, scrub(str(result.get("description", result)), token)
+    except urllib.error.HTTPError as exc:
+        # 본문에 이유가 들어 있습니다. 토큰은 절대 찍지 않습니다.
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+            return False, scrub(str(body.get("description", exc)), token)
+        except Exception:
+            return False, f"HTTP {exc.code}"
+    except Exception as exc:
+        return False, scrub(f"{type(exc).__name__}: {exc}", token)
+
+
+def telegram_setup(token: str) -> int:
+    """봇에게 온 메시지를 읽어 chat_id 를 찾아 줍니다."""
+    if not token:
+        print("[중단] KSKILL_TELEGRAM_TOKEN 이 없습니다.\n")
+        print("먼저 텔레그램에서 봇을 만드세요.")
+        print("  1) 텔레그램에서 @BotFather 를 검색해 대화 시작")
+        print("  2) /newbot 입력, 이름과 아이디를 정하면 토큰을 줍니다")
+        print("  3) 그 토큰을 secrets.env 에 KSKILL_TELEGRAM_TOKEN= 으로 저장")
+        return 1
+
+    print("봇에게 온 메시지를 확인합니다...\n")
+    try:
+        result = telegram_call(token, "getUpdates", {})
+    except Exception as exc:
+        print(f"[실패] {scrub(f'{type(exc).__name__}: {exc}', token)}")
+        print("       토큰이 맞는지, 인터넷이 되는지 확인하세요.")
+        return 1
+
+    if not result.get("ok"):
+        print("[실패]", scrub(str(result.get("description", result)), token))
+        return 1
+
+    chats = {}
+    for update in result.get("result", []):
+        msg = update.get("message") or update.get("channel_post") or {}
+        chat = msg.get("chat") or {}
+        if chat.get("id") is not None:
+            name = chat.get("title") or chat.get("first_name") or chat.get("username") or "?"
+            chats[str(chat["id"])] = name
+
+    if not chats:
+        print("봇에게 온 메시지가 없습니다.")
+        print("  1) 텔레그램에서 방금 만든 봇을 찾아 대화를 시작하세요")
+        print("  2) 아무 말이나 한 마디 보내세요 (예: 안녕)")
+        print("  3) 이 명령을 다시 실행하세요")
+        return 1
+
+    print("찾았습니다. 아래 값을 secrets.env 에 넣으세요.\n")
+    for chat_id, name in chats.items():
+        print(f"  KSKILL_TELEGRAM_CHAT_ID={chat_id}      ({name})")
+    return 0
 
 
 def prevent_sleep(keep_awake: bool = True) -> bool:
@@ -216,6 +304,21 @@ def parse_args() -> argparse.Namespace:
         help="KTX 만 봅니다. 기본값은 ITX-새마을, 무궁화 등도 함께 봅니다.",
     )
     p.add_argument(
+        "--telegram-setup",
+        action="store_true",
+        help="텔레그램 chat_id 를 찾아 줍니다. 처음 한 번만 실행하세요.",
+    )
+    p.add_argument(
+        "--telegram-test",
+        action="store_true",
+        help="텔레그램으로 테스트 메시지를 보내고 끝냅니다.",
+    )
+    p.add_argument(
+        "--no-telegram",
+        action="store_true",
+        help="설정돼 있어도 텔레그램 알림을 보내지 않습니다.",
+    )
+    p.add_argument(
         "--reserve",
         action="store_true",
         help="자리를 찾으면 예약까지 시도합니다. 결제는 하지 않습니다.",
@@ -228,6 +331,31 @@ def main() -> int:
 
     args = parse_args()
     load_secrets()
+
+    tg_token = os.environ.get("KSKILL_TELEGRAM_TOKEN", "")
+    tg_chat = os.environ.get("KSKILL_TELEGRAM_CHAT_ID", "")
+
+    if args.telegram_setup:
+        return telegram_setup(tg_token)
+
+    tg_on = bool(tg_token and tg_chat) and not args.no_telegram
+
+    def notify(text: str) -> None:
+        """텔레그램으로 알립니다. 실패해도 진행에는 영향이 없습니다."""
+        if not tg_on:
+            return
+        ok, why = telegram_send(tg_token, tg_chat, text)
+        if not ok:
+            print(f"[알림 실패] 텔레그램: {why}")
+
+    if args.telegram_test:
+        if not tg_token or not tg_chat:
+            print("[중단] 토큰이나 chat_id 가 없습니다.")
+            print("       python ktx_watch.py --telegram-setup 을 먼저 실행하세요.")
+            return 1
+        ok, why = telegram_send(tg_token, tg_chat, "KTX 감시 테스트 메시지입니다. 이게 보이면 설정 완료입니다.")
+        print("전송 성공. 텔레그램을 확인하세요." if ok else f"전송 실패: {why}")
+        return 0 if ok else 1
 
     # 명령줄로 안 준 값은 여기서 직접 물어봅니다.
     interactive = args.dep is None or args.arr is None or args.date is None
@@ -304,6 +432,12 @@ def main() -> int:
     else:
         print(f"[설정] 타겟: {depart_time[:4]} 이후 열차 (앞쪽 10여 대)")
     print(f"[설정] 예약 시도: {'예' if args.reserve else '아니오 (알림만)'}")
+    if tg_on:
+        print("[설정] 텔레그램 알림: 켬")
+    elif args.no_telegram:
+        print("[설정] 텔레그램 알림: 끔 (--no-telegram)")
+    else:
+        print("[설정] 텔레그램 알림: 없음 (--telegram-setup 으로 설정하세요)")
     print("[안내] 멈추려면 Ctrl+C 를 누르세요.\n")
 
     # 로그인은 딱 한 번만 합니다. 반복할수록 서버에 부담이 됩니다.
@@ -416,6 +550,7 @@ def main() -> int:
                 if errors >= MAX_CONSECUTIVE_ERRORS:
                     print("\n[중단] 에러가 연달아 발생했습니다. 더 두드리지 않고 멈춥니다.")
                     print("       비밀번호, 역 이름, 날짜를 다시 확인해 주세요.")
+                    notify(f"[KTX] 감시가 중단됐습니다\n{dep} -> {arr} {date}\n\n에러가 {MAX_CONSECUTIVE_ERRORS}회 연속 발생\n마지막 오류: {name}: {exc}")
                     return 1
                 trains = []
 
@@ -437,8 +572,11 @@ def main() -> int:
                 print(f"    {t}")
             beep()
 
+            found = "\n".join(f"- {t}" for t in trains[:10])
+
             if not args.reserve:
                 print("\n[완료] 코레일톡 앱에서 직접 예매하세요.")
+                notify(f"[KTX] 빈자리를 찾았습니다\n{dep} -> {arr} {date}\n\n{found}\n\n코레일톡에서 바로 예매하세요.")
                 return 0
 
             try:
@@ -446,11 +584,21 @@ def main() -> int:
             except Exception as exc:
                 print(f"\n[실패] 예약이 되지 않았습니다: {type(exc).__name__}: {exc}")
                 print("       한발 늦었을 수 있습니다. 앱에서 직접 확인해 보세요.")
+                notify(f"[KTX] 빈자리는 찾았지만 예약에 실패했습니다\n{dep} -> {arr} {date}\n\n{found}\n\n사유: {type(exc).__name__}: {exc}")
                 return 1
 
+            # 예약은 됐습니다. 알림이 실패하더라도 이 사실은 반드시 화면에 남깁니다.
             print(f"\n[예약됨] {reservation}")
             print("[중요] 결제는 되지 않았습니다.")
             print("       코레일톡 앱에서 제한시간(보통 10분) 안에 결제하세요.")
+            notify(
+                "[KTX] 예약 성공!\n"
+                f"{dep} -> {arr} {date}\n\n"
+                f"{reservation}\n\n"
+                "아직 결제가 안 됐습니다.\n"
+                "코레일톡 앱에서 10분 안에 결제하세요.\n"
+                "시간이 지나면 자동 취소됩니다."
+            )
             return 0
 
         # 다음 조회까지 대기. 조회에 걸린 시간을 빼서 주기를 일정하게 맞춥니다.
