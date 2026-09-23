@@ -40,6 +40,20 @@ MAX_ERRORS = 6           # 오류가 이만큼 연속되면 포기합니다.
 ERROR_BACKOFF_MAX = 600  # 오류 후 최대 대기(초). 10분.
 
 
+def explain_login_error(name: str) -> str:
+    """로그인 단계에서 난 오류를 설명합니다. 조회 실패와는 원인이 다릅니다."""
+    if name == "KeyError":
+        return ("코레일이 로그인 요청에 예상과 다른 응답을 보냈습니다.\n"
+                "세션 만료가 아니라 로그인 자체가 안 되는 상태입니다.\n\n"
+                "먼저 코레일톡 앱이나 letskorail.com 에서 직접 로그인해 보세요.\n"
+                "- 거기서 잘 되면: 코레일이 이 서버 IP 를 막았거나 점검 중일 수 있습니다\n"
+                "- 거기서도 안 되면: 계정이 잠겼을 수 있습니다. 비밀번호를 바꿔 보세요\n\n"
+                "확인 전에는 봇을 다시 켜지 마세요. 계속 두드리면 더 나빠집니다.")
+    if name == "NeedToLoginError":
+        return "아이디나 비밀번호가 틀렸습니다. secrets.env 를 확인하세요."
+    return "잠시 뒤 다시 시도하되, 반복 실패하면 계정 상태를 먼저 확인하세요."
+
+
 def explain_error(name: str) -> str:
     """오류 이름을 사람이 읽을 수 있는 설명으로 바꿉니다."""
     if name == "KeyError":
@@ -334,7 +348,12 @@ def main() -> int:
     try:
         korail = Korail(korail_id, korail_pw)
     except Exception as exc:
-        print(f"[중단] 로그인 실패: {type(exc).__name__}: {exc}")
+        name = type(exc).__name__
+        print(f"[중단] 로그인 실패: {name}: {exc}")
+        print("       코레일톡 앱이나 letskorail.com 에서 직접 로그인해 보세요.")
+        print("       거기서도 안 되면 계정 문제입니다. 봇을 다시 켜지 마세요.")
+        # 화면에만 남기면 서버를 안 볼 때 알 수가 없습니다. 휴대폰으로도 알립니다.
+        say(f"[봇이 뜨지 못했습니다]\n로그인 실패: {name}\n\n{explain_login_error(name)}")
         return 1
     print("로그인 성공.\n")
 
