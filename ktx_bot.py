@@ -35,6 +35,22 @@ SCRIPT_VERSION = "2026-09-22a"
 
 POLL_TIMEOUT = 30        # 롱폴링 대기(초). 텔레그램이 이 동안 붙잡고 있어 줍니다.
 MAX_TRAINS_IN_MSG = 8    # 메시지에 넣을 열차 수 상한
+RELOGIN_AFTER_MIN = 20   # 이 시간마다 코레일에 다시 로그인합니다.
+MAX_ERRORS = 6           # 오류가 이만큼 연속되면 포기합니다.
+ERROR_BACKOFF_MAX = 600  # 오류 후 최대 대기(초). 10분.
+
+
+def explain_error(name: str) -> str:
+    """오류 이름을 사람이 읽을 수 있는 설명으로 바꿉니다."""
+    if name == "KeyError":
+        return ("코레일이 예상과 다른 응답을 보냈습니다.\n"
+                "보통 세션 만료이거나, 코레일 예매 시스템이 야간 점검 중일 때 납니다.\n"
+                "잠시 뒤 /watch 로 다시 걸어보세요.")
+    if name in ("ConnectionError", "Timeout", "ReadTimeout", "ProxyError"):
+        return "코레일 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요."
+    if name == "NeedToLoginError":
+        return "로그인이 풀렸습니다. 봇을 다시 시작하세요: sudo systemctl restart ktx-bot"
+    return "잠시 뒤 /watch 로 다시 걸어보세요."
 
 
 HELP = """KTX 빈자리 감시 봇
@@ -65,7 +81,26 @@ class Watcher:
         self.attempts = 0
         self.started = time.time()
         self.last_line = "시작 준비 중"
+        self.last_login = time.time()       # 봇이 방금 로그인한 상태로 시작합니다
         self.thread = threading.Thread(target=self._run, daemon=True)
+
+    # --- 로그인 유지 ---
+    def _relogin(self) -> bool:
+        """코레일에 다시 로그인합니다. 성공하면 True.
+
+        오래 돌면 세션이 끊깁니다. 그 상태로 조회하면 코레일이 평소와 다른
+        응답을 주고, 라이브러리가 KeyError: 'strResult' 로 터집니다.
+        """
+        fn = getattr(self.korail, "login", None)
+        if not callable(fn):
+            return False
+        try:
+            fn()
+            self.last_login = time.time()
+            return True
+        except Exception as exc:
+            print(f"    재로그인 실패: {type(exc).__name__}: {exc}")
+            return False
 
     # --- 조회 ---
     def _fetch(self):
@@ -74,6 +109,18 @@ class Watcher:
         wanted = {"include_no_seats": True}
         return fn(s["dep"], s["arr"], s["date"], s["from_time"],
                   **kw.keep_supported(fn, wanted))
+
+    def _search_once(self):
+        """한 번 조회합니다. 세션이 끊긴 것 같으면 다시 로그인하고 한 번 더 시도합니다."""
+        try:
+            return self._fetch()
+        except Exception as exc:
+            if type(exc).__name__ in ("NoResultsError", "SoldOutError"):
+                raise                      # 매진은 정상이므로 그대로 올립니다
+            print(f"    조회 실패({type(exc).__name__}). 다시 로그인해 봅니다.")
+            if not self._relogin():
+                raise
+            return self._fetch()           # 재로그인했으니 한 번만 더
 
     def _in_target(self, train) -> bool:
         s = self.spec
@@ -109,8 +156,13 @@ class Watcher:
             self.attempts += 1
             stamp = time.strftime("%H:%M:%S")
 
+            # 오래 돌면 세션이 끊기므로 주기적으로 미리 갱신합니다.
+            if time.time() - self.last_login > RELOGIN_AFTER_MIN * 60:
+                if self._relogin():
+                    print(f"[{stamp}] 세션 갱신")
+
             try:
-                trains = [t for t in self._fetch() if self._in_target(t)]
+                trains = [t for t in self._search_once() if self._in_target(t)]
                 errors = 0
                 states = [self._has_seat(t) for t in trains]
                 if trains and not all(x is None for x in states):
@@ -124,13 +176,20 @@ class Watcher:
                     trains, total = [], 0
                 else:
                     errors += 1
-                    self.last_line = f"{stamp} 오류: {name}"
+                    self.last_line = f"{stamp} 오류: {name} ({errors}회째)"
                     print(f"[{stamp}] {self.attempts}회 - 오류 {name}: {exc}")
-                    if errors >= kw.MAX_CONSECUTIVE_ERRORS:
+
+                    if errors >= MAX_ERRORS:
                         self.say(f"[중단] 오류가 {errors}회 연속 발생했습니다.\n"
-                                 f"마지막: {name}: {exc}")
+                                 f"마지막: {name}: {exc}\n\n{explain_error(name)}")
                         return
-                    trains, total = [], 0
+
+                    # 코레일이 흔들리는 중일 수 있습니다. 점점 더 오래 쉽니다.
+                    backoff = min(interval * (2 ** errors), ERROR_BACKOFF_MAX)
+                    print(f"    {backoff:.0f}초 쉬었다가 다시 시도합니다 "
+                          f"({errors}/{MAX_ERRORS})")
+                    self.stop_flag.wait(backoff)
+                    continue
 
             if trains:
                 self._on_found(trains)
