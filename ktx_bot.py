@@ -99,6 +99,7 @@ class Watcher:
         self.started = time.time()
         self.last_line = "시작 준비 중"
         self.last_login = time.time()       # 봇이 방금 로그인한 상태로 시작합니다
+        self.reserve_fails = 0              # 예약을 시도했다 놓친 횟수
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     # --- 로그인 유지 ---
@@ -209,8 +210,12 @@ class Watcher:
                     continue
 
             if trains:
-                self._on_found(trains)
-                return
+                if self._on_found(trains):
+                    return
+                # 예약에 실패했으면 감시를 계속합니다. 남이 먼저 가져갔을 뿐,
+                # 취소표는 또 나옵니다. 여기서 끝내면 다시 걸어야 했습니다.
+                self.stop_flag.wait(interval)
+                continue
 
             self.last_line = f"{stamp} {self.attempts}회 - {total}대 매진"
             print(f"[{stamp}] {self.attempts}회 - 열차 {total}대 전부 매진")
@@ -225,7 +230,29 @@ class Watcher:
         else:
             self.say(f"12시간이 지나 감시를 마쳤습니다. (총 {self.attempts}회 조회)")
 
-    def _on_found(self, trains):
+    @staticmethod
+    def seat_detail(train) -> str:
+        """이 열차의 좌석 상태를 최대한 자세히 적습니다.
+
+        '잔여석없음' 이 났을 때, 한발 늦은 것인지 애초에 앉을 자리가 아닌
+        것인지(입석·자유석만 있는 경우) 구분하기 위한 기록입니다.
+        """
+        bits = []
+        for method in ("has_general_seat", "has_special_seat", "has_seat", "has_waiting_list"):
+            fn = getattr(train, method, None)
+            if callable(fn):
+                try:
+                    bits.append(f"{method}={fn()}")
+                except Exception:
+                    bits.append(f"{method}=?")
+        for field in ("general_seat", "special_seat", "reserve_possible",
+                      "reserve_possible_name", "train_no"):
+            if hasattr(train, field):
+                bits.append(f"{field}={getattr(train, field)!r}")
+        return ", ".join(bits) if bits else "(정보 없음)"
+
+    def _on_found(self, trains) -> bool:
+        """자리를 찾았을 때의 처리. 감시를 끝내야 하면 True 를 돌려줍니다."""
         s = self.spec
         listed = "\n".join(f"- {t}" for t in trains[:MAX_TRAINS_IN_MSG])
         head = f"{s['dep']} -> {s['arr']} {s['date']}"
@@ -233,22 +260,40 @@ class Watcher:
 
         if not s["reserve"]:
             self.say(f"[빈자리 발견]\n{head}\n\n{listed}\n\n코레일톡에서 바로 예매하세요.")
-            return
+            return True
 
-        try:
-            reservation = self.korail.reserve(trains[0])
-        except Exception as exc:
-            print(f"예약 실패: {type(exc).__name__}: {exc}")
-            self.say(f"[예약 실패]\n{head}\n\n{listed}\n\n"
-                     f"사유: {type(exc).__name__}: {exc}\n한발 늦었을 수 있습니다.")
-            return
+        # 첫 번째만 보지 않고, 자리가 있다고 나온 열차를 차례로 시도합니다.
+        last_exc = None
+        for train in trains:
+            detail = self.seat_detail(train)
+            print(f"  예약 시도: {train}\n    좌석상태: {detail}")
+            try:
+                reservation = self.korail.reserve(train)
+            except Exception as exc:
+                last_exc = exc
+                print(f"    실패: {type(exc).__name__}: {exc}")
+                continue
 
-        # 예약은 됐습니다. 화면에 먼저 남기고 알립니다.
-        print(f"\n[예약됨] {reservation}")
-        self.say(f"[예약 성공]\n{head}\n\n{reservation}\n\n"
-                 "아직 결제가 안 됐습니다.\n"
-                 "코레일톡 앱에서 10분 안에 결제하세요.\n"
-                 "시간이 지나면 자동 취소됩니다.")
+            # 예약은 됐습니다. 화면에 먼저 남기고 알립니다.
+            print(f"\n[예약됨] {reservation}")
+            self.say(f"[예약 성공]\n{head}\n\n{reservation}\n\n"
+                     "아직 결제가 안 됐습니다.\n"
+                     "코레일톡 앱에서 10분 안에 결제하세요.\n"
+                     "시간이 지나면 자동 취소됩니다.")
+            return True
+
+        # 전부 실패했습니다. 대개는 남이 먼저 가져간 것이므로 계속 감시합니다.
+        self.reserve_fails += 1
+        name = type(last_exc).__name__ if last_exc else "?"
+        self.last_line = f"{time.strftime('%H:%M:%S')} 예약 실패 {self.reserve_fails}회"
+
+        # 매번 알리면 시끄럽습니다. 처음과 5회마다만 보냅니다.
+        if self.reserve_fails == 1 or self.reserve_fails % 5 == 0:
+            self.say(f"[예약 실패 {self.reserve_fails}회]\n{head}\n\n{listed}\n\n"
+                     f"사유: {name}: {last_exc}\n\n"
+                     "한발 늦은 것으로 보입니다. 감시는 계속합니다.\n"
+                     "멈추려면 /stop")
+        return False       # 감시를 계속합니다
 
     def start(self):
         self.thread.start()
