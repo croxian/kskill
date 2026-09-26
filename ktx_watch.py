@@ -35,7 +35,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # 안전장치. 명령줄로 더 공격적으로 바꿀 수 없도록 여기서 못을 박아 둡니다.
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION = "2026-09-22a"
+SCRIPT_VERSION = "2026-09-26a"
 
 MIN_INTERVAL_SEC = 30      # 조회 간격의 하한. 이보다 짧게는 절대 돌지 않습니다.
 MIN_INTERVAL_ALLDAY = 60   # --allday 는 한 번에 여러 번 요청하므로 더 길게 잡습니다.
@@ -210,6 +210,27 @@ def beep() -> None:
             print("\a", end="", flush=True)
     except Exception:
         pass
+
+
+def seat_detail(train) -> str:
+    """이 열차의 좌석 상태를 최대한 자세히 적습니다.
+
+    '잔여석없음' 이 났을 때, 한발 늦은 것인지 애초에 앉을 자리가 아닌
+    것인지(입석·자유석만 있는 경우) 구분하기 위한 기록입니다.
+    """
+    bits = []
+    for method in ("has_general_seat", "has_special_seat", "has_seat", "has_waiting_list"):
+        fn = getattr(train, method, None)
+        if callable(fn):
+            try:
+                bits.append(f"{method}={fn()}")
+            except Exception:
+                bits.append(f"{method}=?")
+    for field in ("general_seat", "special_seat", "reserve_possible",
+                  "reserve_possible_name", "train_no"):
+        if hasattr(train, field):
+            bits.append(f"{field}={getattr(train, field)!r}")
+    return ", ".join(bits) if bits else "(정보 없음)"
 
 
 def keep_supported(fn, candidates: dict) -> dict:
@@ -512,6 +533,7 @@ def main() -> int:
 
     attempts = 0
     errors = 0
+    reserve_fails = 0   # 예약을 시도했다 놓친 횟수
     last_cycle = None
 
     while time.time() < deadline:
@@ -586,13 +608,33 @@ def main() -> int:
                 notify(f"[KTX] 빈자리를 찾았습니다\n{dep} -> {arr} {date}\n\n{found}\n\n코레일톡에서 바로 예매하세요.")
                 return 0
 
-            try:
-                reservation = korail.reserve(trains[0])
-            except Exception as exc:
-                print(f"\n[실패] 예약이 되지 않았습니다: {type(exc).__name__}: {exc}")
-                print("       한발 늦었을 수 있습니다. 앱에서 직접 확인해 보세요.")
-                notify(f"[KTX] 빈자리는 찾았지만 예약에 실패했습니다\n{dep} -> {arr} {date}\n\n{found}\n\n사유: {type(exc).__name__}: {exc}")
-                return 1
+            # 첫 번째만 보지 않고, 자리가 있다고 나온 열차를 차례로 시도합니다.
+            reservation = None
+            last_exc = None
+            for train in trains:
+                print(f"    예약 시도: {train}")
+                print(f"      좌석상태: {seat_detail(train)}")
+                try:
+                    reservation = korail.reserve(train)
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    print(f"      실패: {type(exc).__name__}: {exc}")
+
+            if reservation is None:
+                # 대개는 남이 먼저 가져간 것입니다. 취소표는 또 나오므로
+                # 여기서 끝내지 않고 감시를 이어갑니다.
+                reserve_fails += 1
+                print(f"\n[실패] 예약이 되지 않았습니다 ({reserve_fails}회째). 감시를 계속합니다.")
+                # 매번 알리면 시끄러우니 처음과 5회마다만 보냅니다.
+                if reserve_fails == 1 or reserve_fails % 5 == 0:
+                    notify(f"[KTX] 예약 실패 {reserve_fails}회\n{dep} -> {arr} {date}\n\n{found}\n\n"
+                           f"사유: {type(last_exc).__name__}: {last_exc}\n\n"
+                           "한발 늦은 것으로 보입니다. 감시는 계속합니다.")
+                wait = interval - (time.monotonic() - cycle_start)
+                if wait > 0:
+                    time.sleep(wait)
+                continue
 
             # 예약은 됐습니다. 알림이 실패하더라도 이 사실은 반드시 화면에 남깁니다.
             print(f"\n[예약됨] {reservation}")
