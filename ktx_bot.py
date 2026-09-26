@@ -51,7 +51,7 @@ def explain_login_error(name: str) -> str:
                 "계속 시도하면 계정이 제한될 수 있습니다.\n\n"
                 "정확한 응답을 보려면 서버에서:\n"
                 "  /opt/ktx-bot/venv/bin/python ~/kskill/check_login.py\n\n"
-                "표가 필요하시면 코레일톡 앱의 예약대기를 쓰세요.")
+                "표는 코레일톡 앱에서 직접 잡으셔야 합니다.")
     if name == "NeedToLoginError":
         return "아이디나 비밀번호가 틀렸습니다. secrets.env 를 확인하세요."
     return "잠시 뒤 다시 시도하되, 반복 실패하면 계정 상태를 먼저 확인하세요."
