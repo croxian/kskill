@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import sys
 from pathlib import Path
 
-SCRIPT_VERSION = "2026-09-23a"
+SCRIPT_VERSION = "2026-09-29a"
 print(f"*** check_login.py 버전: {SCRIPT_VERSION} ***\n")
 
 
@@ -44,6 +45,44 @@ _orig_post = requests.Session.post
 _orig_get = requests.Session.get
 
 
+# 로그인이 성공하면 응답에 휴대폰 번호, 고객번호, 세션 키 같은 개인정보가
+# 들어옵니다. 이 출력을 그대로 남에게 보여주는 경우가 많으므로 가립니다.
+SENSITIVE_KEYS = (
+    "strCpNo",          # 휴대폰 번호
+    "strMbCrdNo",       # 멤버십 카드번호
+    "strCustNo",        # 고객번호
+    "strEmailAdr",      # 이메일
+    "strCustNm",        # 이름
+    "Key",              # 세션 키
+    "key",
+    "pwd",
+)
+
+
+def mask_pii(text: str) -> str:
+    """응답에서 개인정보로 보이는 값을 가립니다.
+
+    "키" : "값"  형태를 찾아 값의 앞 두 글자만 남기고 * 로 덮습니다.
+    가리지 못하는 항목이 있을 수 있으니, 출력을 공유하실 때는 한 번
+    훑어보시는 편이 안전합니다.
+    """
+    for key in SENSITIVE_KEYS:
+        # "strCpNo" : "01012345678"  /  "strCpNo":"01012345678" 둘 다 처리
+        pattern = rf'("{re.escape(key)}"\s*:\s*")([^"]*)(")'
+
+        def hide(m):
+            value = m.group(2)
+            if len(value) <= 2:
+                return m.group(1) + "*" * len(value) + m.group(3)
+            return m.group(1) + value[:2] + "*" * (len(value) - 2) + m.group(3)
+
+        text = re.sub(pattern, hide, text)
+
+    # 키 이름을 못 맞춘 경우를 대비해 휴대폰 번호 모양도 한 번 더 거릅니다.
+    text = re.sub(r"\b(01[016789])\d{7,8}\b", r"\1********", text)
+    return text
+
+
 def _show(label: str, resp) -> None:
     print(f"\n--- {label} {resp.url.split('?')[0]}")
     print(f"    상태코드 : {resp.status_code}")
@@ -51,7 +90,7 @@ def _show(label: str, resp) -> None:
     print(f"    형식     : {ctype}")
     body = resp.text or ""
     print(f"    길이     : {len(body)} 글자")
-    print(f"    앞부분   : {body[:400]!r}")
+    print(f"    앞부분   : {mask_pii(body[:400])!r}")
 
 
 def _post(self, url, *a, **k):
