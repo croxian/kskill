@@ -430,57 +430,67 @@ def main() -> int:
             continue
 
         for update in result.get("result", []):
-            offset = update["update_id"] + 1
-            msg = update.get("message") or {}
-            chat_id = str((msg.get("chat") or {}).get("id", ""))
-            text = (msg.get("text") or "").strip()
-            if not text:
-                continue
-
-            # 허락된 사람만 조종할 수 있습니다. 나머지는 답도 하지 않습니다.
-            if chat_id != owner:
-                print(f"[무시] 허용되지 않은 chat_id {chat_id}: {text[:40]}")
-                continue
-
-            parts = text.split()
-            cmd = parts[0].lower().split("@")[0]
-            args = parts[1:]
-            print(f"[명령] {text}")
-
-            if cmd in ("/start", "/help"):
-                say(HELP)
-
-            elif cmd == "/status":
-                if watcher and watcher.alive():
-                    say("감시 중입니다.\n\n" + watcher.describe())
-                else:
-                    say("감시 중인 작업이 없습니다.\n\n/watch 로 시작하세요.")
-
-            elif cmd == "/stop":
-                if watcher and watcher.alive():
-                    watcher.stop()
-                    say("중단 요청을 보냈습니다.")
-                else:
-                    say("감시 중인 작업이 없습니다.")
-
-            elif cmd == "/watch":
-                if watcher and watcher.alive():
-                    say("이미 감시 중입니다. 먼저 /stop 하세요.\n\n" + watcher.describe())
+            # 한 건 처리하다 터져도 봇 전체가 죽지 않게 감쌉니다.
+            # 여기서 예외가 새어 나가면 봇이 죽고, systemd 가 되살리면
+            # 코레일에 다시 로그인합니다. 가만히 둔 봇이 로그인을
+            # 시도하게 되는 경로였습니다.
+            try:
+                uid = update.get("update_id")
+                if uid is not None:
+                    offset = uid + 1
+                msg = update.get("message") or {}
+                chat_id = str((msg.get("chat") or {}).get("id", ""))
+                text = (msg.get("text") or "").strip()
+                if not text:
                     continue
-                spec, err = parse_watch(args)
-                if err:
-                    say(err)
+
+                # 허락된 사람만 조종할 수 있습니다. 나머지는 답도 하지 않습니다.
+                if chat_id != owner:
+                    print(f"[무시] 허용되지 않은 chat_id {chat_id}: {text[:40]}")
                     continue
-                watcher = Watcher(korail, spec, say)
-                # 시작 알림을 먼저 보냅니다. 첫 조회에서 바로 자리를 찾으면
-                # "예약 성공" 이 "시작했습니다" 보다 먼저 도착할 수 있습니다.
-                say("감시를 시작했습니다.\n\n" + watcher.describe())
-                watcher.start()
 
-            else:
-                say(f"모르는 명령입니다: {cmd}\n\n{HELP}")
+                parts = text.split()
+                cmd = parts[0].lower().split("@")[0]
+                args = parts[1:]
+                print(f"[명령] {text}")
+
+                if cmd in ("/start", "/help"):
+                    say(HELP)
+
+                elif cmd == "/status":
+                    if watcher and watcher.alive():
+                        say("감시 중입니다.\n\n" + watcher.describe())
+                    else:
+                        say("감시 중인 작업이 없습니다.\n\n/watch 로 시작하세요.")
+
+                elif cmd == "/stop":
+                    if watcher and watcher.alive():
+                        watcher.stop()
+                        say("중단 요청을 보냈습니다.")
+                    else:
+                        say("감시 중인 작업이 없습니다.")
+
+                elif cmd == "/watch":
+                    if watcher and watcher.alive():
+                        say("이미 감시 중입니다. 먼저 /stop 하세요.\n\n" + watcher.describe())
+                        continue
+                    spec, err = parse_watch(args)
+                    if err:
+                        say(err)
+                        continue
+                    watcher = Watcher(korail, spec, say)
+                    # 시작 알림을 먼저 보냅니다. 첫 조회에서 바로 자리를 찾으면
+                    # "예약 성공" 이 "시작했습니다" 보다 먼저 도착할 수 있습니다.
+                    say("감시를 시작했습니다.\n\n" + watcher.describe())
+                    watcher.start()
+
+                else:
+                    say(f"모르는 명령입니다: {cmd}\n\n{HELP}")
 
 
+            except Exception as exc:
+                print(f"[알림] 메시지 처리 중 오류: {type(exc).__name__}: {exc}")
+                continue
 if __name__ == "__main__":
     try:
         sys.exit(main())
